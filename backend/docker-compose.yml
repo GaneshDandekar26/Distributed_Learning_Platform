@@ -1,109 +1,134 @@
 version: '3.8'
 
 services:
-  # API Gateway Service
-  api-gateway:
+  # Frontend Service
+  frontend:
     build:
-      context: ./DLH_Project
+      context: ../frontend
       dockerfile: Dockerfile
-    container_name: dlh-api-gateway
+    container_name: dlh-frontend
     ports:
-      - "5000:5000"
+      - "9090:9090"
     environment:
-      - SERVICE_NAME=api_gateway
-      - SERVICE_PORT=5000
-    command: python -m services.api_gateway
+      - VITE_API_URL=http://localhost:8000
+      - VITE_MONITORING_URL=http://localhost:9000
+    depends_on:
+      - load_balancer
+      - monitoring_service
     networks:
-      - dlh-network
+      - dlnet
     restart: unless-stopped
 
-  # Authentication Service
-  auth-service:
+  # Load Balancer Service
+  load_balancer:
     build:
       context: ./DLH_Project
       dockerfile: Dockerfile
-    container_name: dlh-auth-service
+    container_name: dlh-load-balancer
     ports:
-      - "5001:5001"
+      - "8000:8000"
     environment:
-      - SERVICE_NAME=auth_service
-      - SERVICE_PORT=5001
-    command: python -m services.auth_service
+      - SERVICE_NAME=load_balancer
+    command: python -m services.load_balancer
+    depends_on:
+      - app1
+      - app2
+      - app3
     networks:
-      - dlh-network
+      - dlnet
     restart: unless-stopped
 
-  # Course Management Service
-  course-service:
+  # Monitoring Service
+  monitoring_service:
     build:
       context: ./DLH_Project
       dockerfile: Dockerfile
-    container_name: dlh-course-service
+    container_name: dlh-monitoring
     ports:
-      - "5002:5002"
+      - "9000:9000"
     environment:
-      - SERVICE_NAME=course_service
-      - SERVICE_PORT=5002
-    command: python -m services.course_service
+      - SERVICE_NAME=monitoring_service
+    command: python -m services.monitoring_service
+    depends_on:
+      - app1
+      - app2
+      - app3
     networks:
-      - dlh-network
+      - dlnet
     restart: unless-stopped
 
-  # Chat Service
-  chat-service:
+  # App Server 1
+  app1:
     build:
       context: ./DLH_Project
       dockerfile: Dockerfile
-    container_name: dlh-chat-service
+    container_name: dlh-app1
     ports:
-      - "5003:5003"
+      - "8001:8001"
     environment:
-      - SERVICE_NAME=chat_service
-      - SERVICE_PORT=5003
-    command: python -m services.chat_service
+      - SERVER_ID=app1
+      - PORT=8001
+      - MONGO_URI=mongodb+srv://ganeshdandekar23_db_user:Uh4TirdCgXsqwPmL@dlh.nmdrhnl.mongodb.net/?appName=DLH
+    command: python -m services.app_server
     networks:
-      - dlh-network
+      - dlnet
     restart: unless-stopped
 
-  # Whiteboard Service
-  whiteboard-service:
+  # App Server 2
+  app2:
     build:
       context: ./DLH_Project
       dockerfile: Dockerfile
-    container_name: dlh-whiteboard-service
+    container_name: dlh-app2
     ports:
-      - "5004:5004"
+      - "8002:8002"
     environment:
-      - SERVICE_NAME=whiteboard_service
-      - SERVICE_PORT=5004
-    command: python -m services.whiteboard_service
+      - SERVER_ID=app2
+      - PORT=8002
+      - MONGO_URI=mongodb+srv://ganeshdandekar23_db_user:Uh4TirdCgXsqwPmL@dlh.nmdrhnl.mongodb.net/?appName=DLH
+    command: python -m services.app_server
     networks:
-      - dlh-network
+      - dlnet
+    restart: unless-stopped
+
+  # App Server 3
+  app3:
+    build:
+      context: ./DLH_Project
+      dockerfile: Dockerfile
+    container_name: dlh-app3
+    ports:
+      - "8003:8003"
+    environment:
+      - SERVER_ID=app3
+      - PORT=8003
+      - MONGO_URI=mongodb+srv://ganeshdandekar23_db_user:Uh4TirdCgXsqwPmL@dlh.nmdrhnl.mongodb.net/?appName=DLH
+    command: python -m services.app_server
+    networks:
+      - dlnet
     restart: unless-stopped
 
   # Analytics Dashboard
-  analytics-dashboard:
+  analytics_dashboard:
     build:
       context: ./DLH_Project
       dockerfile: Dockerfile
-    container_name: dlh-analytics-dashboard
+    container_name: dlh-analytics
     ports:
       - "8501:8501"
     environment:
       - SERVICE_NAME=analytics_dashboard
+      - MONITORING_URL=http://monitoring_service:9000
     command: streamlit run analytics/dashboard.py --server.port=8501 --server.address=0.0.0.0
-    networks:
-      - dlh-network
-    restart: unless-stopped
     depends_on:
-      - api-gateway
-      - auth-service
-      - course-service
-      - chat-service
-      - whiteboard-service
+      - monitoring_service
+      - load_balancer
+    networks:
+      - dlnet
+    restart: unless-stopped
 
 networks:
-  dlh-network:
+  dlnet:
     driver: bridge
 
 volumes:

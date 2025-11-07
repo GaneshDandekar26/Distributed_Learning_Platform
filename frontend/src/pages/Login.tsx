@@ -12,24 +12,31 @@ import { toast } from "sonner";
 
 const Login = () => {
   const navigate = useNavigate();
+  const [isSignUp, setIsSignUp] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [name, setName] = useState("");
   const [role, setRole] = useState<UserRole>("student");
 
-  const handleLogin = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    if (!email || !password) {
+    if (!email || !password || (isSignUp && !name)) {
       toast.error("Please fill in all fields");
       return;
     }
 
     try {
-      const user = await authService.login(email, password, role);
-      toast.success(`Welcome back, ${user.name}!`);
+      if (isSignUp) {
+        const user = await authService.signup(email, password, name, role);
+        toast.success(`Welcome, ${user.name}! Account created successfully.`);
+      } else {
+        const user = await authService.login(email, password, role);
+        toast.success(`Welcome back, ${user.name}!`);
+      }
       
       // Route based on role
-      switch (user.role) {
+      switch (role) {
         case "student":
           navigate("/student");
           break;
@@ -40,8 +47,8 @@ const Login = () => {
           navigate("/admin");
           break;
       }
-    } catch (error) {
-      toast.error("Login failed. Please try again.");
+    } catch (error: any) {
+      toast.error(error.message || (isSignUp ? "Signup failed" : "Login failed"));
     }
   };
 
@@ -60,11 +67,13 @@ const Login = () => {
 
         <Card className="border-2">
           <CardHeader>
-            <CardTitle>Sign In</CardTitle>
-            <CardDescription>Choose your role and access the platform</CardDescription>
+            <CardTitle>{isSignUp ? "Sign Up" : "Sign In"}</CardTitle>
+            <CardDescription>
+              {isSignUp ? "Create an account to access the platform" : "Choose your role and access the platform"}
+            </CardDescription>
           </CardHeader>
           <CardContent>
-            <form onSubmit={handleLogin} className="space-y-6">
+            <form onSubmit={handleSubmit} className="space-y-6">
               <Tabs value={role} onValueChange={(v) => setRole(v as UserRole)} className="w-full">
                 <TabsList className="grid w-full grid-cols-3">
                   <TabsTrigger value="student" className="gap-2">
@@ -82,6 +91,20 @@ const Login = () => {
                 </TabsList>
                 
                 <div className="mt-6 space-y-4">
+                  {isSignUp && (
+                    <div className="space-y-2">
+                      <Label htmlFor="name">Full Name</Label>
+                      <Input
+                        id="name"
+                        type="text"
+                        placeholder="Enter your full name"
+                        value={name}
+                        onChange={(e) => setName(e.target.value)}
+                        required
+                      />
+                    </div>
+                  )}
+                  
                   <div className="space-y-2">
                     <Label htmlFor="email">Email</Label>
                     <Input
@@ -109,14 +132,25 @@ const Login = () => {
               </Tabs>
 
               <Button type="submit" className="w-full" size="lg">
-                Sign In as {role.charAt(0).toUpperCase() + role.slice(1)}
+                {isSignUp ? "Sign Up" : "Sign In"} as {role.charAt(0).toUpperCase() + role.slice(1)}
               </Button>
+              
+              <div className="text-center">
+                <Button
+                  type="button"
+                  variant="link"
+                  onClick={() => setIsSignUp(!isSignUp)}
+                  className="text-sm"
+                >
+                  {isSignUp ? "Already have an account? Sign In" : "Don't have an account? Sign Up"}
+                </Button>
+              </div>
             </form>
           </CardContent>
         </Card>
 
         <div className="mt-8 text-center text-sm text-muted-foreground">
-          <p>Demo credentials: Any email/password with role selection</p>
+          <p>Distributed system with load balancing and real-time monitoring</p>
         </div>
       </div>
     </div>
