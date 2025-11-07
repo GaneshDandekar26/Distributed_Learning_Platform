@@ -38,7 +38,10 @@ class MonitoringService:
                 'response_time': 0,
                 'requests_count': 0,
                 'errors_count': 0,
-                'start_time': datetime.now().isoformat()
+                'start_time': datetime.now().isoformat(),
+                'lamport_time': 0,
+                'role': 'UNKNOWN',
+                'is_primary': False
             }
             for service in self.services
         }
@@ -65,11 +68,19 @@ class MonitoringService:
             
             is_healthy = response.status_code == 200
             
+            # Extract DC metrics from response
+            health_data = response.json() if is_healthy else {}
+            lamport_time = health_data.get('lamport_time', 0)
+            ft_status = health_data.get('fault_tolerance', {})
+            
             self.metrics[service_name].update({
                 'status': 'healthy' if is_healthy else 'unhealthy',
                 'last_check': datetime.now().isoformat(),
                 'response_time': round(response_time, 2),
-                'requests_count': self.metrics[service_name]['requests_count'] + 1
+                'requests_count': self.metrics[service_name]['requests_count'] + 1,
+                'lamport_time': lamport_time,
+                'role': ft_status.get('role', 'UNKNOWN') if ft_status else 'UNKNOWN',
+                'is_primary': ft_status.get('role') == 'PRIMARY' if ft_status else False
             })
             
             if is_healthy:
@@ -79,13 +90,15 @@ class MonitoringService:
             self.history[service_name].append({
                 'timestamp': datetime.now().isoformat(),
                 'status': 'healthy' if is_healthy else 'unhealthy',
-                'response_time': round(response_time, 2)
+                'response_time': round(response_time, 2),
+                'lamport_time': lamport_time,
+                'role': ft_status.get('role', 'UNKNOWN') if ft_status else 'UNKNOWN'
             })
             
             if len(self.history[service_name]) > 100:
                 self.history[service_name].pop(0)
                 
-            logger.info(f"{service_name}: {self.metrics[service_name]['status']} ({response_time:.2f}ms)")
+            logger.info(f"{service_name}: {self.metrics[service_name]['status']} ({response_time:.2f}ms) Lamport:{lamport_time} Role:{self.metrics[service_name]['role']}")
             
         except Exception as e:
             self.metrics[service_name].update({

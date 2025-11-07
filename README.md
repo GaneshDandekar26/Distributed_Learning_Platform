@@ -36,9 +36,11 @@ DISTRIBUTED_LEARNING_PLATFORM/
 - ✅ **Load Balancing**: Automatic traffic distribution across 3 app servers
 - ✅ **Health Monitoring**: Real-time server health tracking with auto-recovery
 - ✅ **MongoDB Integration**: User authentication with signup/signin
-- ✅ **Fault Tolerance**: System continues operating even if servers fail
+- ✅ **Fault Tolerance**: Heartbeat-based primary-backup replication with automatic failover
 - ✅ **Real-time Dashboard**: Live server status visualization
-- ✅ **Distributed Systems Concepts**: Lamport clocks, consistency protocols, MapReduce
+- ✅ **Custom RMI**: Remote Method Invocation between Docker containers
+- ✅ **Lamport Clock**: Logical clock synchronization across distributed servers
+- ✅ **Distributed Systems Concepts**: RMI, Lamport clocks, fault tolerance protocols
 
 ## Quick Start
 
@@ -160,7 +162,7 @@ python main.py
 ## API Endpoints
 
 ### Authentication
-- `POST /auth/signup` - Register new user
+- `POST /auth/signup` - Register new user (with Lamport clock)
 - `POST /auth/signin` - User login
 - `POST /auth/logout` - User logout
 
@@ -169,15 +171,65 @@ python main.py
 - `POST /courses` - Create new course
 - `GET /courses/:id` - Get course details
 
+### Distributed Computing
+- `GET /dc/lamport` - Get current Lamport clock time
+- `POST /dc/lamport/sync` - Synchronize Lamport clocks
+- `GET /dc/heartbeat` - Get fault tolerance status
+- `GET /dc/rmi/test` - Test RMI calls to other servers
+
 ### Monitoring
-- `GET /metrics` - Get all service metrics
+- `GET /metrics` - Get all service metrics (includes DC metrics)
 - `GET /summary` - Get system health summary
-- `GET /health` - Health check
+- `GET /health` - Health check (includes Lamport time and FT status)
 
 ### Load Balancer
 - `GET /status` - Load balancer status
 - `GET /health` - Health check
 - All other routes are proxied to app servers
+
+## Distributed Computing Concepts
+
+### 1. Custom RMI (Remote Method Invocation)
+- **Location**: `backend/DLH_Project/utils/custom_rmi.py`
+- **Port**: 9001 (9101, 9201, 9301 externally)
+- **Features**:
+  - Remote method calls between Docker containers
+  - Pickle serialization for method arguments and results
+  - Socket-based communication
+  - Service discovery using Docker network names (app1, app2, app3)
+- **Usage**: Servers can call methods on other servers remotely
+  ```bash
+  curl http://localhost:8001/dc/rmi/test
+  ```
+
+### 2. Lamport Logical Clock
+- **Location**: `backend/DLH_Project/utils/lamport_clock.py`
+- **Features**:
+  - Logical timestamps for distributed events
+  - Happens-before relationship tracking
+  - Clock synchronization across servers
+  - Thread-safe implementation
+- **Rules**:
+  - Increment on local events
+  - Update to max(local, received) + 1 on message receive
+- **Dashboard**: View real-time Lamport clock graph in Admin Dashboard
+
+### 3. Fault Tolerance Protocol (Heartbeat-based)
+- **Location**: `backend/DLH_Project/utils/ft_protocol.py`
+- **Port**: 9002 (9102, 9202, 9302 externally)
+- **Features**:
+  - Primary-backup replication
+  - Heartbeat every 2 seconds
+  - Automatic failover after 3 missed heartbeats (6 seconds)
+  - UDP-based heartbeat communication
+- **Architecture**:
+  - app1 starts as PRIMARY
+  - app2 and app3 start as BACKUP
+  - If PRIMARY fails, a BACKUP automatically promotes to PRIMARY
+- **Dashboard**: View PRIMARY/BACKUP roles in "Server State & Roles" table
+
+### Testing DC Concepts
+See detailed testing instructions in `backend/DC_CONCEPTS_TESTING.md`
 
 ## Environment Variables
 

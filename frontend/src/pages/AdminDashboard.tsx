@@ -6,6 +6,7 @@ import { MetricsChart } from "@/components/MetricsChart";
 import { LamportClockChart } from "@/components/LamportClockChart";
 import { ServerStateTable } from "@/components/ServerStateTable";
 import { ConsistencyPanel } from "@/components/ConsistencyPanel";
+import { DCActivityLog } from "@/components/DCActivityLog";
 import { StatusIndicator } from "@/components/StatusIndicator";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -56,9 +57,9 @@ const AdminDashboard = () => {
   const servers: ServerMetrics[] = monitoringData ? Object.entries(monitoringData).map(([id, data]: [string, any]) => ({
     serverId: id.toUpperCase(),
     activeConnections: data.requests_count || 0,
-    lamportClock: data.uptime || 0,
-    coordinatorRole: id === 'app1' ? 'LEADER' : 'FOLLOWER',
-    ftRole: data.status === 'healthy' ? 'PRIMARY' : 'BACKUP',
+    lamportClock: data.lamport_time || 0,
+    coordinatorRole: data.is_primary ? 'LEADER' : 'FOLLOWER',
+    ftRole: data.role || 'BACKUP',
     isHealthy: data.status === 'healthy',
   })) : [];
 
@@ -187,9 +188,20 @@ const AdminDashboard = () => {
                     <div className="flex items-center gap-3">
                       <div className={`w-3 h-3 rounded-full ${data.status === 'healthy' ? 'bg-green-500' : 'bg-red-500'}`} />
                       <div>
-                        <h4 className="font-semibold">{serverId.toUpperCase()}</h4>
+                        <h4 className="font-semibold flex items-center gap-2">
+                          {serverId.toUpperCase()}
+                          {data.role === 'PRIMARY' && (
+                            <span className="text-xs px-2 py-0.5 bg-blue-500 text-white rounded-full">PRIMARY</span>
+                          )}
+                          {data.role === 'BACKUP' && (
+                            <span className="text-xs px-2 py-0.5 bg-gray-500 text-white rounded-full">BACKUP</span>
+                          )}
+                        </h4>
                         <p className="text-sm text-muted-foreground">
                           Status: {data.status} | Uptime: {Math.floor(data.uptime / 60)}m | Response: {data.response_time}ms
+                        </p>
+                        <p className="text-xs text-muted-foreground mt-1">
+                          🕐 Lamport: {data.lamport_time || 0} | 🔄 Requests: {data.requests_count || 0}
                         </p>
                       </div>
                     </div>
@@ -217,8 +229,112 @@ const AdminDashboard = () => {
           {/* Lamport Clock Visualization */}
           <LamportClockChart servers={metrics.servers} />
 
+          {/* DC Activity Log - Shows real-time RMI, Lamport, and FT events */}
+          <DCActivityLog servers={metrics.servers} />
+
           {/* Server State Table */}
           <ServerStateTable servers={metrics.servers} />
+
+          {/* RMI & DC Metrics Panel */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Distributed Computing Metrics</CardTitle>
+              <CardDescription>
+                RMI connectivity, Lamport clock synchronization, and fault tolerance status
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="p-4 border rounded-lg">
+                  <h4 className="font-semibold mb-2 flex items-center gap-2">
+                    🔗 RMI Status
+                  </h4>
+                  <p className="text-sm text-muted-foreground mb-3">
+                    Remote Method Invocation between servers
+                  </p>
+                  {servers.filter(s => s.isHealthy).length > 0 ? (
+                    servers.filter(s => s.isHealthy).map(server => (
+                      <div key={server.serverId} className="text-xs py-1 flex justify-between items-center">
+                        <span className="font-mono">{server.serverId}</span>
+                        <div className="flex items-center gap-2">
+                          <span className="text-green-600">✓ Active</span>
+                          <span className="text-muted-foreground">({server.activeConnections} reqs)</span>
+                        </div>
+                      </div>
+                    ))
+                  ) : (
+                    <p className="text-xs text-red-500">No healthy servers</p>
+                  )}
+                  <div className="mt-3 pt-3 border-t text-xs text-muted-foreground">
+                    💡 Port 9001 (9101, 9201, 9301)
+                  </div>
+                </div>
+                
+                <div className="p-4 border rounded-lg">
+                  <h4 className="font-semibold mb-2 flex items-center gap-2">
+                    🕐 Lamport Clocks
+                  </h4>
+                  <p className="text-sm text-muted-foreground mb-3">
+                    Logical clock synchronization
+                  </p>
+                  {servers.map(server => (
+                    <div key={server.serverId} className="text-xs py-1 flex justify-between items-center">
+                      <span className="font-mono">{server.serverId}</span>
+                      <div className="flex items-center gap-2">
+                        <span className="font-bold text-lg">{server.lamportClock}</span>
+                        {server.isHealthy ? (
+                          <span className="text-green-500">⟳</span>
+                        ) : (
+                          <span className="text-red-500">⊗</span>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                  <div className="mt-3 pt-3 border-t text-xs text-muted-foreground">
+                    💡 Increments on every operation
+                  </div>
+                </div>
+                
+                <div className="p-4 border rounded-lg">
+                  <h4 className="font-semibold mb-2 flex items-center gap-2">
+                    🛡️ Fault Tolerance
+                  </h4>
+                  <p className="text-sm text-muted-foreground mb-3">
+                    Heartbeat-based replication (2s interval)
+                  </p>
+                  {servers.map(server => (
+                    <div key={server.serverId} className="text-xs py-1 flex justify-between items-center">
+                      <span className="font-mono">{server.serverId}</span>
+                      <div className="flex items-center gap-2">
+                        {server.ftRole === 'PRIMARY' ? (
+                          <span className="font-bold text-blue-600 flex items-center gap-1">
+                            <span className="h-2 w-2 bg-blue-600 rounded-full animate-pulse"></span>
+                            PRIMARY
+                          </span>
+                        ) : (
+                          <span className="font-bold text-gray-600">BACKUP</span>
+                        )}
+                        {!server.isHealthy && <span className="text-red-500">⚠️</span>}
+                      </div>
+                    </div>
+                  ))}
+                  <div className="mt-3 pt-3 border-t text-xs text-muted-foreground">
+                    💡 Port 9002 (UDP) - Failover in 6s
+                  </div>
+                </div>
+              </div>
+              
+              <div className="mt-4 p-3 bg-green-50 dark:bg-green-950 rounded-md">
+                <div className="text-sm text-green-900 dark:text-green-100">
+                  <strong>✅ All DC Concepts Active:</strong> 
+                  <span className="ml-2">Custom RMI</span>
+                  <span className="ml-2">• Lamport Clock</span>
+                  <span className="ml-2">• Heartbeat FT</span>
+                  <span className="ml-2 text-xs">({servers.filter(s => s.isHealthy).length}/{servers.length} servers healthy)</span>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
 
           {/* Consistency & Analytics */}
           <ConsistencyPanel metrics={metrics} />

@@ -1,6 +1,7 @@
 """
 Application Server
 Main backend server handling courses, users, and data with MongoDB.
+Integrates RMI, Lamport Clock, and Fault Tolerance protocols.
 """
 
 from flask import Flask, jsonify, request
@@ -11,6 +12,12 @@ import os
 import logging
 from datetime import datetime
 import hashlib
+import sys
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from utils.lamport_clock import LamportClock
+from utils.custom_rmi import RMIDispatcher, CourseService
+from utils.ft_protocol import HeartbeatProtocol
 
 app = Flask(__name__)
 CORS(app)
@@ -23,6 +30,11 @@ MONGO_URI = os.getenv('MONGO_URI', 'mongodb+srv://ganeshdandekar23_db_user:Uh4Ti
 SERVER_ID = os.getenv('SERVER_ID', 'app1')
 PORT = int(os.getenv('PORT', '8001'))
 
+# Initialize Distributed Computing components
+lamport_clock = LamportClock()
+heartbeat_protocol = None
+rmi_dispatcher = None
+
 try:
     client = MongoClient(MONGO_URI)
     db = client['distributed_learning_hub']
@@ -30,6 +42,33 @@ try:
     courses_collection = db['courses']
     sessions_collection = db['sessions']
     logger.info(f"Connected to MongoDB successfully on {SERVER_ID}")
+    
+    # Initialize RMI Dispatcher for remote course access
+    course_service = CourseService(courses_collection)
+    rmi_dispatcher = RMIDispatcher(course_service, port=9001)
+    rmi_dispatcher.start()
+    logger.info(f"RMI Dispatcher started on port 9001")
+    
+    # Initialize Heartbeat Protocol (app1 is PRIMARY by default)
+    is_primary = (SERVER_ID == 'app1')
+    role = 'PRIMARY' if is_primary else 'BACKUP'
+    primary_host = 'app1' if not is_primary else None
+    
+    heartbeat_protocol = HeartbeatProtocol(
+        server_id=SERVER_ID,
+        role=role,
+        primary_host=primary_host,
+        port=9002
+    )
+    
+    # Set callback for promotion to primary
+    def on_promote_callback(server_id):
+        logger.warning(f"⚠️ {server_id} PROMOTED TO PRIMARY - Taking over cluster leadership")
+    
+    heartbeat_protocol.on_promote_to_primary = on_promote_callback
+    heartbeat_protocol.start()
+    logger.info(f"Heartbeat protocol started as {role}")
+    
 except Exception as e:
     logger.error(f"Failed to connect to MongoDB: {e}")
     db = None
@@ -56,24 +95,102 @@ def serialize_doc(doc):
 # Health check
 @app.route('/health', methods=['GET'])
 def health():
-    """Health check endpoint."""
+    """Health check endpoint with DC metrics."""
+    # Increment Lamport clock for local event
+    lamport_time = lamport_clock.increment_local()
+    
     db_status = 'connected' if db is not None else 'disconnected'
+    ft_status = heartbeat_protocol.get_status() if heartbeat_protocol else None
+    
     return jsonify({
         'status': 'healthy',
         'server_id': SERVER_ID,
         'port': PORT,
         'database': db_status,
-        'timestamp': datetime.now().isoformat()
+        'timestamp': datetime.now().isoformat(),
+        'lamport_time': lamport_time,
+        'fault_tolerance': ft_status
     }), 200
 
 
 @app.route('/info', methods=['GET'])
 def info():
-    """Server information."""
+    """Server information with DC status."""
+    lamport_time = lamport_clock.get_time()
+    ft_status = heartbeat_protocol.get_status() if heartbeat_protocol else None
+    
     return jsonify({
         'server_id': SERVER_ID,
         'port': PORT,
         'uptime': 'running',
+        'timestamp': datetime.now().isoformat(),
+        'lamport_clock': lamport_time,
+        'role': ft_status.get('role') if ft_status else 'UNKNOWN',
+        'is_primary': heartbeat_protocol.is_primary() if heartbeat_protocol else False
+    }), 200
+
+
+# Distributed Computing endpoints
+@app.route('/dc/lamport', methods=['GET'])
+def get_lamport_clock():
+    """Get current Lamport clock time."""
+    return jsonify({
+        'server_id': SERVER_ID,
+        'lamport_time': lamport_clock.get_time(),
+        'timestamp': datetime.now().isoformat()
+    }), 200
+
+
+@app.route('/dc/lamport/sync', methods=['POST'])
+def sync_lamport_clock():
+    """Synchronize Lamport clock with received timestamp."""
+    data = request.get_json()
+    external_ts = data.get('lamport_time', 0)
+    
+    new_time = lamport_clock.update_on_receive(external_ts)
+    
+    return jsonify({
+        'server_id': SERVER_ID,
+        'new_lamport_time': new_time,
+        'timestamp': datetime.now().isoformat()
+    }), 200
+
+
+@app.route('/dc/heartbeat', methods=['GET'])
+def get_heartbeat_status():
+    """Get fault tolerance heartbeat status."""
+    if not heartbeat_protocol:
+        return jsonify({'error': 'Heartbeat protocol not initialized'}), 500
+    
+    status = heartbeat_protocol.get_status()
+    return jsonify(status), 200
+
+
+@app.route('/dc/rmi/test', methods=['GET'])
+def test_rmi():
+    """Test RMI by calling methods on other servers."""
+    from utils.custom_rmi import RemoteCourseStub
+    
+    results = {}
+    for i in range(1, 4):
+        server = f'app{i}'
+        if server != SERVER_ID:
+            try:
+                stub = RemoteCourseStub(host=server, port=9001)
+                courses = stub.get_courses()
+                results[server] = {
+                    'status': 'success',
+                    'courses_count': len(courses) if courses else 0
+                }
+            except Exception as e:
+                results[server] = {
+                    'status': 'failed',
+                    'error': str(e)
+                }
+    
+    return jsonify({
+        'server_id': SERVER_ID,
+        'rmi_calls': results,
         'timestamp': datetime.now().isoformat()
     }), 200
 
@@ -81,8 +198,11 @@ def info():
 # Authentication endpoints
 @app.route('/auth/signup', methods=['POST'])
 def signup():
-    """User registration."""
+    """User registration with Lamport clock synchronization."""
     try:
+        # Increment Lamport clock for this event
+        lamport_time = lamport_clock.increment_local()
+        
         data = request.get_json()
         email = data.get('email')
         password = data.get('password')
@@ -96,20 +216,21 @@ def signup():
         if users_collection.find_one({'email': email}):
             return jsonify({'error': 'User already exists'}), 400
             
-        # Create user
+        # Create user with Lamport timestamp
         user = {
             'email': email,
             'password': hash_password(password),
             'name': name,
             'role': role,
             'created_at': datetime.now().isoformat(),
-            'created_by': SERVER_ID
+            'created_by': SERVER_ID,
+            'lamport_time': lamport_time
         }
         
         result = users_collection.insert_one(user)
         user['_id'] = str(result.inserted_id)
         
-        logger.info(f"User registered: {email} on {SERVER_ID}")
+        logger.info(f"User registered: {email} on {SERVER_ID} at Lamport time {lamport_time}")
         
         return jsonify({
             'success': True,
@@ -120,7 +241,8 @@ def signup():
                 'name': user['name'],
                 'role': user['role']
             },
-            'server_id': SERVER_ID
+            'server_id': SERVER_ID,
+            'lamport_time': lamport_time
         }), 201
         
     except Exception as e:
