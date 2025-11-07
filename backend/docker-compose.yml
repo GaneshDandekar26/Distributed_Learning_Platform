@@ -1,0 +1,111 @@
+version: '3.8'
+
+services:
+  # API Gateway Service
+  api-gateway:
+    build:
+      context: ./DLH_Project
+      dockerfile: Dockerfile
+    container_name: dlh-api-gateway
+    ports:
+      - "5000:5000"
+    environment:
+      - SERVICE_NAME=api_gateway
+      - SERVICE_PORT=5000
+    command: python -m services.api_gateway
+    networks:
+      - dlh-network
+    restart: unless-stopped
+
+  # Authentication Service
+  auth-service:
+    build:
+      context: ./DLH_Project
+      dockerfile: Dockerfile
+    container_name: dlh-auth-service
+    ports:
+      - "5001:5001"
+    environment:
+      - SERVICE_NAME=auth_service
+      - SERVICE_PORT=5001
+    command: python -m services.auth_service
+    networks:
+      - dlh-network
+    restart: unless-stopped
+
+  # Course Management Service
+  course-service:
+    build:
+      context: ./DLH_Project
+      dockerfile: Dockerfile
+    container_name: dlh-course-service
+    ports:
+      - "5002:5002"
+    environment:
+      - SERVICE_NAME=course_service
+      - SERVICE_PORT=5002
+    command: python -m services.course_service
+    networks:
+      - dlh-network
+    restart: unless-stopped
+
+  # Chat Service
+  chat-service:
+    build:
+      context: ./DLH_Project
+      dockerfile: Dockerfile
+    container_name: dlh-chat-service
+    ports:
+      - "5003:5003"
+    environment:
+      - SERVICE_NAME=chat_service
+      - SERVICE_PORT=5003
+    command: python -m services.chat_service
+    networks:
+      - dlh-network
+    restart: unless-stopped
+
+  # Whiteboard Service
+  whiteboard-service:
+    build:
+      context: ./DLH_Project
+      dockerfile: Dockerfile
+    container_name: dlh-whiteboard-service
+    ports:
+      - "5004:5004"
+    environment:
+      - SERVICE_NAME=whiteboard_service
+      - SERVICE_PORT=5004
+    command: python -m services.whiteboard_service
+    networks:
+      - dlh-network
+    restart: unless-stopped
+
+  # Analytics Dashboard
+  analytics-dashboard:
+    build:
+      context: ./DLH_Project
+      dockerfile: Dockerfile
+    container_name: dlh-analytics-dashboard
+    ports:
+      - "8501:8501"
+    environment:
+      - SERVICE_NAME=analytics_dashboard
+    command: streamlit run analytics/dashboard.py --server.port=8501 --server.address=0.0.0.0
+    networks:
+      - dlh-network
+    restart: unless-stopped
+    depends_on:
+      - api-gateway
+      - auth-service
+      - course-service
+      - chat-service
+      - whiteboard-service
+
+networks:
+  dlh-network:
+    driver: bridge
+
+volumes:
+  dlh-data:
+    driver: local
