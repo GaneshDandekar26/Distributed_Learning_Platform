@@ -1,5 +1,18 @@
 # Distributed LearnHub
 
+## Project Structure
+
+```
+DISTRIBUTED_LEARNING_PLATFORM/
+│
+├── frontend/          # React + TypeScript frontend application
+├── backend/           # Distributed Python backend system
+│   ├── DLH_Project/  # (To be added)
+│   └── docker-compose.yml
+│
+└── README.md
+```
+
 ## Project info
 
 A modern distributed learning platform with real-time whiteboard collaboration, chat with Lamport timestamps, and comprehensive distributed systems monitoring.
@@ -19,9 +32,10 @@ Follow these steps:
 git clone <YOUR_GIT_URL>
 
 # Step 2: Navigate to the project directory.
-cd <YOUR_PROJECT_NAME>
+cd Distributed_Learning_Platform
 
-# Step 3: Install the necessary dependencies.
+# Step 3: Navigate to frontend directory and install dependencies.
+cd frontend
 npm i
 
 # Step 4: Start the development server with auto-reloading and an instant preview.
