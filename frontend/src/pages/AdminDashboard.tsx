@@ -13,10 +13,11 @@ import { AppServerStats } from "@/components/AppServerStats";
 import BullyElectionChart from "@/components/BullyElectionChart";
 import MessagingPanel from "@/components/MessagingPanel";
 import FTRoleMonitor from "@/components/FTRoleMonitor";
+import { StrongConsistencyPanel } from "@/components/StrongConsistencyPanel";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { LogOut, Activity, Server, AlertCircle, Crown, MessageSquare, Shield } from "lucide-react";
+import { LogOut, Activity, Server, AlertCircle, Crown, MessageSquare, Shield, Database } from "lucide-react";
 import { toast } from "sonner";
 
 const MONITORING_URL = import.meta.env.VITE_MONITORING_URL || 'http://localhost:9005';
@@ -245,7 +246,7 @@ const AdminDashboard = () => {
             </CardHeader>
             <CardContent>
               <Tabs defaultValue="election" className="w-full">
-                <TabsList className="grid w-full grid-cols-5">
+                <TabsList className="grid w-full grid-cols-6">
                   <TabsTrigger value="election" className="flex items-center gap-2">
                     <Crown className="h-4 w-4" />
                     <span className="hidden sm:inline">Bully Election</span>
@@ -255,6 +256,11 @@ const AdminDashboard = () => {
                     <MessageSquare className="h-4 w-4" />
                     <span className="hidden sm:inline">Messaging</span>
                     <span className="sm:hidden">Msg</span>
+                  </TabsTrigger>
+                  <TabsTrigger value="consistency" className="flex items-center gap-2">
+                    <Database className="h-4 w-4" />
+                    <span className="hidden sm:inline">Consistency</span>
+                    <span className="sm:hidden">Cons</span>
                   </TabsTrigger>
                   <TabsTrigger value="ft" className="flex items-center gap-2">
                     <Shield className="h-4 w-4" />
@@ -279,6 +285,10 @@ const AdminDashboard = () => {
 
                 <TabsContent value="messaging" className="mt-6">
                   <MessagingPanel />
+                </TabsContent>
+
+                <TabsContent value="consistency" className="mt-6">
+                  <StrongConsistencyPanel />
                 </TabsContent>
 
                 <TabsContent value="ft" className="mt-6">

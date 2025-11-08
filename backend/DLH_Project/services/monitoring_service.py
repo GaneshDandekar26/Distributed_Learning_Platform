@@ -472,7 +472,56 @@ def get_xmlrpc_metrics():
     return jsonify(monitor.xmlrpc_server.get_all_metrics()), 200
 
 
+@app.route('/consistency/status/all', methods=['GET'])
+def get_all_consistency_status():
+    """Get consistency status from all servers."""
+    servers = ['app1', 'app2', 'app3']
+    port_map = {'app1': 8001, 'app2': 8002, 'app3': 8003}
+    
+    consistency_data = {}
+    
+    for server in servers:
+        port = port_map[server]
+        try:
+            response = requests.get(f'http://{server}:{port}/consistency/status', timeout=5)
+            if response.status_code == 200:
+                consistency_data[server] = response.json()
+            else:
+                consistency_data[server] = {'error': f'HTTP {response.status_code}'}
+        except requests.exceptions.Timeout:
+            consistency_data[server] = {'error': 'timeout'}
+        except Exception as e:
+            consistency_data[server] = {'error': str(e)}
+    
+    return jsonify(consistency_data), 200
+
+
+@app.route('/consistency/statistics/all', methods=['GET'])
+def get_all_consistency_statistics():
+    """Get consistency statistics from all servers."""
+    servers = ['app1', 'app2', 'app3']
+    port_map = {'app1': 8001, 'app2': 8002, 'app3': 8003}
+    
+    stats_data = {}
+    
+    for server in servers:
+        port = port_map[server]
+        try:
+            response = requests.get(f'http://{server}:{port}/consistency/statistics', timeout=5)
+            if response.status_code == 200:
+                stats_data[server] = response.json()
+            else:
+                stats_data[server] = {'error': f'HTTP {response.status_code}'}
+        except requests.exceptions.Timeout:
+            stats_data[server] = {'error': 'timeout'}
+        except Exception as e:
+            stats_data[server] = {'error': str(e)}
+    
+    return jsonify(stats_data), 200
+
+
 if __name__ == '__main__':
     logger.info("Starting Monitoring Service REST API on port 9005")
     logger.info("XML-RPC Metrics Server running on port 9000")
     app.run(host='0.0.0.0', port=9005, debug=False)
+

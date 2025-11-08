@@ -334,9 +334,62 @@ class InterServerMessaging:
                 'log_file': self.message_log_file
             }
     
+    def send_consistency_message(self, target_server: str, message: dict, timeout: float = 2.0) -> dict:
+        """
+        Send a consistency protocol message (for 2PC) and wait for response.
+        
+        Args:
+            target_server: Target server ID
+            message: Consistency message (PREPARE, COMMIT, ABORT)
+            timeout: Timeout for response
+            
+        Returns:
+            Response dictionary from target server
+        """
+        import requests
+        
+        # Map server IDs to ports
+        port_map = {
+            'app1': 8001,
+            'app2': 8002,
+            'app3': 8003
+        }
+        
+        target_port = port_map.get(target_server)
+        if not target_port:
+            logger.error(f"Unknown target server: {target_server}")
+            return {'error': 'Unknown server'}
+        
+        phase = message.get('phase')
+        
+        try:
+            if phase == 'PREPARE':
+                url = f"http://{target_server}:{target_port}/consistency/prepare"
+            elif phase == 'COMMIT':
+                url = f"http://{target_server}:{target_port}/consistency/commit"
+            elif phase == 'ABORT':
+                url = f"http://{target_server}:{target_port}/consistency/abort"
+            else:
+                return {'error': 'Unknown phase'}
+            
+            response = requests.post(url, json=message, timeout=timeout)
+            if response.status_code == 200:
+                return response.json()
+            else:
+                logger.error(f"Consistency message failed: {response.status_code}")
+                return {'error': f'HTTP {response.status_code}'}
+                
+        except requests.exceptions.Timeout:
+            logger.error(f"Timeout sending consistency message to {target_server}")
+            return {'error': 'timeout'}
+        except Exception as e:
+            logger.error(f"Error sending consistency message to {target_server}: {e}")
+            return {'error': str(e)}
+    
     def clear_messages(self):
         """Clear message history (for testing)."""
         with self.lock:
             self.sent_messages = []
             self.received_messages = []
         logger.info(f"{self.server_id} message history cleared")
+

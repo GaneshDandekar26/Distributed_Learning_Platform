@@ -28,6 +28,7 @@ from utils.custom_rmi import RMIDispatcher, CourseService
 from utils.ft_protocol import HeartbeatProtocol
 from utils.bully_election import BullyElection
 from utils.inter_server_messaging import InterServerMessaging
+from utils.strong_consistency import StrongConsistencyManager
 
 app = Flask(__name__)
 CORS(app)
@@ -47,6 +48,7 @@ heartbeat_protocol = None
 rmi_dispatcher = None
 bully_election = None
 messaging_system = None
+consistency_manager = None
 
 # Connection tracking
 active_connections = 0
@@ -550,7 +552,155 @@ def get_message_stats():
     return jsonify(stats), 200
 
 
-# Distributed Computing endpoints
+# =============================================================================
+# CONSISTENCY AND REPLICATION ENDPOINTS
+# =============================================================================
+
+@app.route('/consistency/status', methods=['GET'])
+def get_consistency_status():
+    """Get consistency and replication status."""
+    if not consistency_manager:
+        return jsonify({'error': 'Consistency manager not initialized'}), 503
+    
+    status = consistency_manager.get_consistency_status()
+    return jsonify(status), 200
+
+
+@app.route('/consistency/statistics', methods=['GET'])
+def get_consistency_statistics():
+    """Get detailed consistency statistics."""
+    if not consistency_manager:
+        return jsonify({'error': 'Consistency manager not initialized'}), 503
+    
+    stats = consistency_manager.get_statistics()
+    return jsonify(stats), 200
+
+
+@app.route('/consistency/write', methods=['POST'])
+def consistency_write():
+    """Perform a write with strong consistency and synchronous replication."""
+    if not consistency_manager:
+        return jsonify({'error': 'Consistency manager not initialized'}), 503
+    
+    data = request.get_json()
+    key = data.get('key')
+    value = data.get('value')
+    
+    if not key:
+        return jsonify({'error': 'Key is required'}), 400
+    
+    # Define replication function
+    def replicate_to_servers(server, message, timeout=2.0):
+        try:
+            # Send to server via messaging system
+            if messaging_system:
+                response = messaging_system.send_consistency_message(server, message, timeout)
+                return response
+            return None
+        except Exception as e:
+            logger.error(f"Replication error to {server}: {e}")
+            return None
+    
+    success, message, operation = consistency_manager.write_with_replication(
+        key, value, replicate_to_servers
+    )
+    
+    return jsonify({
+        'success': success,
+        'message': message,
+        'operation': operation,
+        'lamport_time': lamport_clock.increment_local()
+    }), 200 if success else 500
+
+
+@app.route('/consistency/read', methods=['GET'])
+def consistency_read():
+    """Perform a strongly consistent read."""
+    if not consistency_manager:
+        return jsonify({'error': 'Consistency manager not initialized'}), 503
+    
+    key = request.args.get('key')
+    if not key:
+        return jsonify({'error': 'Key parameter is required'}), 400
+    
+    value = consistency_manager.read_consistent(key)
+    
+    return jsonify({
+        'key': key,
+        'value': value,
+        'server_id': SERVER_ID,
+        'lamport_time': lamport_clock.increment_local(),
+        'timestamp': datetime.now().isoformat()
+    }), 200
+
+
+@app.route('/consistency/prepare', methods=['POST'])
+def handle_prepare():
+    """Handle 2PC PREPARE phase request."""
+    if not consistency_manager:
+        return jsonify({'error': 'Consistency manager not initialized'}), 503
+    
+    data = request.get_json()
+    operation = data.get('operation')
+    
+    response = consistency_manager.handle_prepare_request(operation)
+    return jsonify(response), 200
+
+
+@app.route('/consistency/commit', methods=['POST'])
+def handle_commit():
+    """Handle 2PC COMMIT phase request."""
+    if not consistency_manager:
+        return jsonify({'error': 'Consistency manager not initialized'}), 503
+    
+    data = request.get_json()
+    operation = data.get('operation')
+    
+    response = consistency_manager.handle_commit_request(operation)
+    return jsonify(response), 200
+
+
+@app.route('/consistency/abort', methods=['POST'])
+def handle_abort():
+    """Handle 2PC ABORT phase request."""
+    if not consistency_manager:
+        return jsonify({'error': 'Consistency manager not initialized'}), 503
+    
+    data = request.get_json()
+    operation = data.get('operation')
+    
+    response = consistency_manager.handle_abort_request(operation)
+    return jsonify(response), 200
+
+
+@app.route('/consistency/verify', methods=['GET'])
+def verify_consistency():
+    """Verify sequential consistency of operations."""
+    if not consistency_manager:
+        return jsonify({'error': 'Consistency manager not initialized'}), 503
+    
+    verification = consistency_manager.verify_sequential_consistency()
+    return jsonify(verification), 200
+
+
+@app.route('/consistency/history/<key>', methods=['GET'])
+def get_version_history(key):
+    """Get version history for a specific key."""
+    if not consistency_manager:
+        return jsonify({'error': 'Consistency manager not initialized'}), 503
+    
+    history = consistency_manager.get_version_history(key)
+    return jsonify({
+        'key': key,
+        'history': history,
+        'version_count': len(history)
+    }), 200
+
+
+# =============================================================================
+# DISTRIBUTED COMPUTING ENDPOINTS
+# =============================================================================
+
 @app.route('/dc/lamport', methods=['GET'])
 def get_lamport_clock():
     """Get current Lamport clock time."""
@@ -860,6 +1010,15 @@ if __name__ == '__main__':
     )
     messaging_system.start()
     logger.info(f"✓ Inter-Server Messaging initialized for {SERVER_ID}")
+    
+    # Initialize Strong Consistency Manager
+    all_servers = ['app1', 'app2', 'app3']
+    consistency_manager = StrongConsistencyManager(
+        server_id=SERVER_ID,
+        servers=all_servers,
+        lamport_clock=lamport_clock
+    )
+    logger.info(f"✓ Strong Consistency Manager initialized for {SERVER_ID}")
     
     # Initialize Heartbeat Protocol (Fault Tolerance)
     primary_server = 'app1'  # app1 is initially PRIMARY
