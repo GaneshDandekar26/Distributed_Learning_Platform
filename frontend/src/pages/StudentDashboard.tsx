@@ -3,9 +3,9 @@ import { useNavigate } from "react-router-dom";
 import { authService } from "@/lib/auth";
 import { Course, ChatMessage } from "@/types";
 import { CourseCard } from "@/components/CourseCard";
-import { ChatPanel } from "@/components/ChatPanel";
-import { WhiteboardCanvas } from "@/components/WhiteboardCanvas";
+import { WhiteboardWithChat } from "@/components/WhiteboardWithChat";
 import { StatusIndicator } from "@/components/StatusIndicator";
+import { UserDebugInfo } from "@/components/UserDebugInfo";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { LogOut, BookOpen, MessageSquare, Presentation } from "lucide-react";
@@ -66,7 +66,18 @@ const StudentDashboard = () => {
   ]);
 
   useEffect(() => {
-    if (!user || user.role !== "student") {
+    console.log("Current user:", user);
+    
+    if (!user) {
+      console.log("No user found, redirecting to login");
+      navigate("/");
+      return;
+    }
+    
+    if (user.role !== "student") {
+      console.log(`User role is ${user.role}, not student. Redirecting to login.`);
+      toast.error("Access denied. Please login as a student.");
+      authService.logout();
       navigate("/");
       return;
     }
@@ -77,7 +88,7 @@ const StudentDashboard = () => {
     }, 5000);
 
     return () => clearInterval(interval);
-  }, [user, navigate]);
+  }, []); // Empty dependency array to prevent re-running
 
   const handleLogout = () => {
     authService.logout();
@@ -127,19 +138,19 @@ const StudentDashboard = () => {
       </header>
 
       <main className="container mx-auto px-4 py-8">
+        <div className="mb-6">
+          <UserDebugInfo />
+        </div>
+        
         <Tabs defaultValue="courses" className="space-y-6">
           <TabsList>
             <TabsTrigger value="courses" className="gap-2">
               <BookOpen className="h-4 w-4" />
               My Courses
             </TabsTrigger>
-            <TabsTrigger value="discussion" className="gap-2">
-              <MessageSquare className="h-4 w-4" />
-              Discussion
-            </TabsTrigger>
             <TabsTrigger value="whiteboard" className="gap-2">
               <Presentation className="h-4 w-4" />
-              Whiteboard
+              Whiteboard & Chat
             </TabsTrigger>
           </TabsList>
 
@@ -174,29 +185,8 @@ const StudentDashboard = () => {
             </div>
           </TabsContent>
 
-          <TabsContent value="discussion">
-            {selectedCourse ? (
-              <ChatPanel
-                courseId={selectedCourse}
-                messages={messages.filter((m) => m.courseId === selectedCourse)}
-                onSendMessage={handleSendMessage}
-                currentUserId={user?.id || ""}
-              />
-            ) : (
-              <div className="text-center py-12 text-muted-foreground">
-                Select a course to view discussions
-              </div>
-            )}
-          </TabsContent>
-
           <TabsContent value="whiteboard">
-            {selectedCourse ? (
-              <WhiteboardCanvas whiteboardId={selectedCourse} isReadOnly={true} />
-            ) : (
-              <div className="text-center py-12 text-muted-foreground">
-                Select a course to view whiteboard
-              </div>
-            )}
+            <WhiteboardWithChat isReadOnly={true} />
           </TabsContent>
         </Tabs>
       </main>

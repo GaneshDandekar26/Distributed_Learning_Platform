@@ -1,22 +1,24 @@
 import { useState, useRef, useEffect } from "react";
-import { ChatMessage } from "@/types";
+import { useChatSocket } from "../hooks/useSocket";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
-import { Send, Clock } from "lucide-react";
+import { Send, Clock, Wifi, WifiOff } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface ChatPanelProps {
-  courseId: string;
-  messages: ChatMessage[];
-  onSendMessage: (content: string) => void;
-  currentUserId: string;
+  room: string;
+  username: string;
+  userRole: string;
 }
 
-export const ChatPanel = ({ courseId, messages, onSendMessage, currentUserId }: ChatPanelProps) => {
+export const ChatPanel = ({ room, username, userRole }: ChatPanelProps) => {
   const [newMessage, setNewMessage] = useState("");
+  const [isTyping, setIsTyping] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+  
+  const { messages, sendMessage, typingUsers, sendTyping, isConnected, serverId } = useChatSocket(room, username);
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -25,44 +27,74 @@ export const ChatPanel = ({ courseId, messages, onSendMessage, currentUserId }: 
   }, [messages]);
 
   const handleSend = () => {
-    if (newMessage.trim()) {
-      onSendMessage(newMessage);
+    if (newMessage.trim() && isConnected) {
+      sendMessage(newMessage);
       setNewMessage("");
+      setIsTyping(false);
+      sendTyping(false);
+    }
+  };
+
+  const handleTyping = (value: string) => {
+    setNewMessage(value);
+    
+    if (value && !isTyping) {
+      setIsTyping(true);
+      sendTyping(true);
+    } else if (!value && isTyping) {
+      setIsTyping(false);
+      sendTyping(false);
     }
   };
 
   return (
     <div className="flex flex-col h-full border rounded-lg bg-card">
       <div className="p-4 border-b">
-        <h3 className="font-semibold">Discussion & Chat</h3>
-        <p className="text-sm text-muted-foreground">Real-time with Lamport Timestamps</p>
+        <div className="flex items-center justify-between">
+          <div>
+            <h3 className="font-semibold">Real-Time Chat</h3>
+            <p className="text-xs text-muted-foreground">
+              Lamport Timestamps • {isConnected ? `Server: ${serverId}` : 'Disconnected'}
+            </p>
+          </div>
+          {isConnected ? (
+            <Wifi className="h-4 w-4 text-green-500" />
+          ) : (
+            <WifiOff className="h-4 w-4 text-red-500" />
+          )}
+        </div>
       </div>
 
       <ScrollArea className="flex-1 p-4" ref={scrollRef}>
         <div className="space-y-4">
-          {messages.map((message) => (
+          {messages.map((message, index) => (
             <div
-              key={message.id}
+              key={message.id || index}
               className={cn(
                 "flex flex-col gap-1 p-3 rounded-lg",
-                message.userId === currentUserId ? "bg-primary/10 ml-auto max-w-[80%]" : "bg-muted max-w-[80%]"
+                message.username === username ? "bg-primary/10 ml-auto max-w-[80%]" : "bg-muted max-w-[80%]"
               )}
             >
               <div className="flex items-center gap-2">
-                <span className="font-semibold text-sm">{message.userName}</span>
-                <Badge variant={message.userRole === "teacher" ? "default" : "secondary"} className="text-xs">
-                  {message.userRole}
+                <span className="font-semibold text-sm">{message.username}</span>
+                <Badge variant={message.username === username ? "default" : "secondary"} className="text-xs">
+                  {message.username === username ? userRole : 'user'}
                 </Badge>
               </div>
-              <p className="text-sm">{message.content}</p>
+              <p className="text-sm">{message.message}</p>
               <div className="flex items-center gap-2 text-xs text-muted-foreground mt-1">
                 <Clock className="h-3 w-3" />
-                <span>LT: {message.lamportTimestamp}</span>
+                <span>LT: {message.lamport_time}</span>
                 <span>•</span>
                 <span>{new Date(message.timestamp).toLocaleTimeString()}</span>
               </div>
             </div>
           ))}
+          {typingUsers.length > 0 && (
+            <div className="text-xs text-muted-foreground italic">
+              {typingUsers.join(', ')} {typingUsers.length === 1 ? 'is' : 'are'} typing...
+            </div>
+          )}
         </div>
       </ScrollArea>
 
@@ -70,12 +102,13 @@ export const ChatPanel = ({ courseId, messages, onSendMessage, currentUserId }: 
         <div className="flex gap-2">
           <Input
             value={newMessage}
-            onChange={(e) => setNewMessage(e.target.value)}
+            onChange={(e) => handleTyping(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && handleSend()}
             placeholder="Type your message..."
             className="flex-1"
+            disabled={!isConnected}
           />
-          <Button onClick={handleSend} size="icon">
+          <Button onClick={handleSend} size="icon" disabled={!isConnected || !newMessage.trim()}>
             <Send className="h-4 w-4" />
           </Button>
         </div>

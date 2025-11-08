@@ -3,8 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { authService } from "@/lib/auth";
 import { Course, ChatMessage } from "@/types";
 import { CourseCard } from "@/components/CourseCard";
-import { ChatPanel } from "@/components/ChatPanel";
-import { WhiteboardCanvas } from "@/components/WhiteboardCanvas";
+import { WhiteboardWithChat } from "@/components/WhiteboardWithChat";
 import { StatusIndicator } from "@/components/StatusIndicator";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -65,7 +64,7 @@ const TeacherDashboard = () => {
       navigate("/");
       return;
     }
-  }, [user, navigate]);
+  }, []); // Empty dependency array to prevent re-running
 
   const handleLogout = () => {
     authService.logout();
@@ -115,13 +114,9 @@ const TeacherDashboard = () => {
               <BookOpen className="h-4 w-4" />
               My Courses
             </TabsTrigger>
-            <TabsTrigger value="discussion" className="gap-2">
-              <MessageSquare className="h-4 w-4" />
-              Discussion
-            </TabsTrigger>
             <TabsTrigger value="whiteboard" className="gap-2">
               <Presentation className="h-4 w-4" />
-              Whiteboard
+              Whiteboard & Chat
             </TabsTrigger>
             <TabsTrigger value="control" className="gap-2">
               <Users className="h-4 w-4" />
@@ -145,29 +140,8 @@ const TeacherDashboard = () => {
             </div>
           </TabsContent>
 
-          <TabsContent value="discussion">
-            {selectedCourse ? (
-              <ChatPanel
-                courseId={selectedCourse}
-                messages={messages.filter((m) => m.courseId === selectedCourse)}
-                onSendMessage={handleSendMessage}
-                currentUserId={user?.id || ""}
-              />
-            ) : (
-              <div className="text-center py-12 text-muted-foreground">
-                Select a course to view discussions
-              </div>
-            )}
-          </TabsContent>
-
           <TabsContent value="whiteboard">
-            {selectedCourse ? (
-              <WhiteboardCanvas whiteboardId={selectedCourse} isReadOnly={false} />
-            ) : (
-              <div className="text-center py-12 text-muted-foreground">
-                Select a course to use whiteboard
-              </div>
-            )}
+            <WhiteboardWithChat isReadOnly={false} />
           </TabsContent>
 
           <TabsContent value="control">

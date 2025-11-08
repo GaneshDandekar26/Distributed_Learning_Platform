@@ -29,9 +29,20 @@ from utils.ft_protocol import HeartbeatProtocol
 from utils.bully_election import BullyElection
 from utils.inter_server_messaging import InterServerMessaging
 from utils.strong_consistency import StrongConsistencyManager
+from utils.socketio_server import SocketIOServer
+
+# Import whiteboard session service
+import sys
+import os
+services_dir = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, services_dir)
+from whiteboard_session_service import whiteboard_session_bp
 
 app = Flask(__name__)
 CORS(app)
+
+# Register blueprints
+app.register_blueprint(whiteboard_session_bp)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -48,6 +59,8 @@ heartbeat_protocol = None
 rmi_dispatcher = None
 bully_election = None
 messaging_system = None
+consistency_manager = None
+socketio_server = None
 consistency_manager = None
 
 # Connection tracking
@@ -397,6 +410,9 @@ def health():
     # Get app server stats if available
     app_server_stats = app_server.get_stats() if app_server else {}
     
+    # Get Socket.IO stats if available
+    socketio_stats = socketio_server.get_stats() if socketio_server else {}
+    
     return jsonify({
         'status': 'healthy',
         'server_id': SERVER_ID,
@@ -406,7 +422,8 @@ def health():
         'lamport_time': lamport_time,
         'fault_tolerance': ft_status,
         'active_connections': app_server_stats.get('active_connections', 0),
-        'total_requests': app_server_stats.get('total_requests', 0)
+        'total_requests': app_server_stats.get('total_requests', 0),
+        'socketio': socketio_stats
     }), 200
 
 
@@ -954,6 +971,122 @@ def get_course(course_id):
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/courses/<course_id>/enroll', methods=['POST'])
+def enroll_in_course(course_id):
+    """Enroll a student in a course."""
+    try:
+        data = request.get_json()
+        user_id = data.get('user_id')
+        username = data.get('username', 'Anonymous')
+        
+        if not user_id:
+            return jsonify({'error': 'User ID required'}), 400
+        
+        # Check if course exists
+        course = courses_collection.find_one({'_id': ObjectId(course_id)})
+        if not course:
+            return jsonify({'error': 'Course not found'}), 404
+        
+        # Check if already enrolled
+        if user_id in course.get('students', []):
+            return jsonify({
+                'success': True,
+                'message': 'Already enrolled',
+                'server_id': SERVER_ID
+            }), 200
+        
+        # Add student to course
+        courses_collection.update_one(
+            {'_id': ObjectId(course_id)},
+            {'$push': {'students': user_id}}
+        )
+        
+        # Add course to user's enrollments
+        users_collection.update_one(
+            {'_id': ObjectId(user_id)},
+            {'$push': {'enrolled_courses': course_id}},
+            upsert=True
+        )
+        
+        logger.info(f"User {username} enrolled in course {course_id}")
+        
+        return jsonify({
+            'success': True,
+            'message': 'Enrolled successfully',
+            'server_id': SERVER_ID
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Enrollment error: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/courses/<course_id>/unenroll', methods=['POST'])
+def unenroll_from_course(course_id):
+    """Unenroll a student from a course."""
+    try:
+        data = request.get_json()
+        user_id = data.get('user_id')
+        
+        if not user_id:
+            return jsonify({'error': 'User ID required'}), 400
+        
+        # Remove student from course
+        courses_collection.update_one(
+            {'_id': ObjectId(course_id)},
+            {'$pull': {'students': user_id}}
+        )
+        
+        # Remove course from user's enrollments
+        users_collection.update_one(
+            {'_id': ObjectId(user_id)},
+            {'$pull': {'enrolled_courses': course_id}}
+        )
+        
+        logger.info(f"User {user_id} unenrolled from course {course_id}")
+        
+        return jsonify({
+            'success': True,
+            'message': 'Unenrolled successfully',
+            'server_id': SERVER_ID
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Unenrollment error: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/users/<user_id>/courses', methods=['GET'])
+def get_user_courses(user_id):
+    """Get all courses a user is enrolled in."""
+    try:
+        user = users_collection.find_one({'_id': ObjectId(user_id)})
+        if not user:
+            return jsonify({'error': 'User not found'}), 404
+        
+        enrolled_ids = user.get('enrolled_courses', [])
+        enrolled_courses = []
+        
+        for cid in enrolled_ids:
+            try:
+                course = courses_collection.find_one({'_id': ObjectId(cid)})
+                if course:
+                    enrolled_courses.append(serialize_doc(course))
+            except:
+                continue
+        
+        return jsonify({
+            'success': True,
+            'courses': enrolled_courses,
+            'count': len(enrolled_courses),
+            'server_id': SERVER_ID
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Get user courses error: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
 @app.route('/stats', methods=['GET'])
 def get_stats():
     """Get server statistics."""
@@ -1020,6 +1153,16 @@ if __name__ == '__main__':
     )
     logger.info(f"✓ Strong Consistency Manager initialized for {SERVER_ID}")
     
+    # Initialize Socket.IO Server for real-time communication
+    socketio_server = SocketIOServer(
+        app=app,
+        lamport_clock=lamport_clock,
+        server_id=SERVER_ID
+    )
+    logger.info(f"✓ Socket.IO Server initialized for {SERVER_ID}")
+    logger.info(f"  - Chat namespace: /chat")
+    logger.info(f"  - Whiteboard namespace: /whiteboard")
+    
     # Initialize Heartbeat Protocol (Fault Tolerance)
     primary_server = 'app1'  # app1 is initially PRIMARY
     role = 'PRIMARY' if SERVER_ID == primary_server else 'BACKUP'
@@ -1076,6 +1219,13 @@ if __name__ == '__main__':
     logger.info(f"✅ {SERVER_ID} FULLY INITIALIZED - All DC components running")
     logger.info("="*60)
     
-    # Start Flask app
-    app.run(host='0.0.0.0', port=PORT, debug=False)
-
+    # Start Flask app with Socket.IO WSGI wrapper
+    from werkzeug.serving import run_simple
+    run_simple(
+        '0.0.0.0', 
+        PORT, 
+        socketio_server.app,
+        use_reloader=False,
+        use_debugger=False,
+        threaded=True
+    )
