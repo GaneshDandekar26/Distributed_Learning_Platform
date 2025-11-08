@@ -4,11 +4,12 @@ import { authService } from "@/lib/auth";
 import { Course, ChatMessage } from "@/types";
 import { CourseCard } from "@/components/CourseCard";
 import { WhiteboardWithChat } from "@/components/WhiteboardWithChat";
+import { AIDoubtAgent } from "@/components/AIDoubtAgent";
 import { StatusIndicator } from "@/components/StatusIndicator";
 import { UserDebugInfo } from "@/components/UserDebugInfo";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { LogOut, BookOpen, MessageSquare, Presentation } from "lucide-react";
+import { LogOut, BookOpen, MessageSquare, Presentation, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 
 const StudentDashboard = () => {
@@ -152,6 +153,10 @@ const StudentDashboard = () => {
               <Presentation className="h-4 w-4" />
               Whiteboard & Chat
             </TabsTrigger>
+            <TabsTrigger value="ai-doubt" className="gap-2">
+              <Sparkles className="h-4 w-4" />
+              AI Doubt Agent
+            </TabsTrigger>
           </TabsList>
 
           <TabsContent value="courses" className="space-y-6">
@@ -187,6 +192,12 @@ const StudentDashboard = () => {
 
           <TabsContent value="whiteboard">
             <WhiteboardWithChat isReadOnly={true} />
+          </TabsContent>
+          
+          <TabsContent value="ai-doubt">
+            <div className="max-w-5xl mx-auto" style={{ height: '700px' }}>
+              <AIDoubtAgent />
+            </div>
           </TabsContent>
         </Tabs>
       </main>

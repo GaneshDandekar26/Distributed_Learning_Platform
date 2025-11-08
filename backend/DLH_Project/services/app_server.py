@@ -37,12 +37,14 @@ import os
 services_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, services_dir)
 from whiteboard_session_service import whiteboard_session_bp
+from ai_doubt_agent import ai_doubt_bp
 
 app = Flask(__name__)
 CORS(app)
 
 # Register blueprints
 app.register_blueprint(whiteboard_session_bp)
+app.register_blueprint(ai_doubt_bp)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)

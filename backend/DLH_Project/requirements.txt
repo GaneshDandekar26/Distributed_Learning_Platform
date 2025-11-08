@@ -19,3 +19,6 @@ mrjob==0.7.4
 # Additional dependencies
 python-dotenv==1.0.0
 aiohttp==3.9.1
+
+# AI/ML  
+google-generativeai==0.3.2
