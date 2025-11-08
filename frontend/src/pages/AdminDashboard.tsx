@@ -10,12 +10,16 @@ import { DCActivityLog } from "@/components/DCActivityLog";
 import { StatusIndicator } from "@/components/StatusIndicator";
 import { LoadBalancerChart } from "@/components/LoadBalancerChart";
 import { AppServerStats } from "@/components/AppServerStats";
+import BullyElectionChart from "@/components/BullyElectionChart";
+import MessagingPanel from "@/components/MessagingPanel";
+import FTRoleMonitor from "@/components/FTRoleMonitor";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { LogOut, Activity, Server, AlertCircle } from "lucide-react";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { LogOut, Activity, Server, AlertCircle, Crown, MessageSquare, Shield } from "lucide-react";
 import { toast } from "sonner";
 
-const MONITORING_URL = import.meta.env.VITE_MONITORING_URL || 'http://localhost:9000';
+const MONITORING_URL = import.meta.env.VITE_MONITORING_URL || 'http://localhost:9005';
 
 const AdminDashboard = () => {
   const navigate = useNavigate();
@@ -231,17 +235,72 @@ const AdminDashboard = () => {
           {/* Application Server Statistics */}
           <AppServerStats servers={metrics.servers} />
 
+          {/* Distributed Computing Features Tabs */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Advanced Distributed Computing Features</CardTitle>
+              <CardDescription>
+                Bully Election, Inter-Server Messaging, Fault Tolerance Roles, Lamport Clocks, and Consistency Models
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Tabs defaultValue="election" className="w-full">
+                <TabsList className="grid w-full grid-cols-5">
+                  <TabsTrigger value="election" className="flex items-center gap-2">
+                    <Crown className="h-4 w-4" />
+                    <span className="hidden sm:inline">Bully Election</span>
+                    <span className="sm:hidden">Election</span>
+                  </TabsTrigger>
+                  <TabsTrigger value="messaging" className="flex items-center gap-2">
+                    <MessageSquare className="h-4 w-4" />
+                    <span className="hidden sm:inline">Messaging</span>
+                    <span className="sm:hidden">Msg</span>
+                  </TabsTrigger>
+                  <TabsTrigger value="ft" className="flex items-center gap-2">
+                    <Shield className="h-4 w-4" />
+                    <span className="hidden sm:inline">FT Roles</span>
+                    <span className="sm:hidden">FT</span>
+                  </TabsTrigger>
+                  <TabsTrigger value="lamport" className="flex items-center gap-2">
+                    <Activity className="h-4 w-4" />
+                    <span className="hidden sm:inline">Lamport</span>
+                    <span className="sm:hidden">Clock</span>
+                  </TabsTrigger>
+                  <TabsTrigger value="servers" className="flex items-center gap-2">
+                    <Server className="h-4 w-4" />
+                    <span className="hidden sm:inline">Servers</span>
+                    <span className="sm:hidden">Srv</span>
+                  </TabsTrigger>
+                </TabsList>
+
+                <TabsContent value="election" className="mt-6">
+                  <BullyElectionChart />
+                </TabsContent>
+
+                <TabsContent value="messaging" className="mt-6">
+                  <MessagingPanel />
+                </TabsContent>
+
+                <TabsContent value="ft" className="mt-6">
+                  <FTRoleMonitor />
+                </TabsContent>
+
+                <TabsContent value="lamport" className="mt-6">
+                  <LamportClockChart servers={metrics.servers} />
+                </TabsContent>
+
+                <TabsContent value="servers" className="mt-6">
+                  <div className="space-y-6">
+                    <ServerStateTable servers={metrics.servers} />
+                    <DCActivityLog servers={metrics.servers} />
+                  </div>
+                </TabsContent>
+              </Tabs>
+            </CardContent>
+          </Card>
+
           {/* Load Balancing Chart */}
           <MetricsChart servers={metrics.servers} />
-
-          {/* Lamport Clock Visualization */}
-          <LamportClockChart servers={metrics.servers} />
-
-          {/* DC Activity Log - Shows real-time RMI, Lamport, and FT events */}
-          <DCActivityLog servers={metrics.servers} />
-
-          {/* Server State Table */}
-          <ServerStateTable servers={metrics.servers} />
 
           {/* RMI & DC Metrics Panel */}
           <Card>

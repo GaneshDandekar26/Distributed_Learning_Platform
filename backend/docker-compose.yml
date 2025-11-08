@@ -11,7 +11,7 @@ services:
       - "9090:9090"
     environment:
       - VITE_API_URL=http://localhost:8000
-      - VITE_MONITORING_URL=http://localhost:9000
+      - VITE_MONITORING_URL=http://localhost:9005
     depends_on:
       - load_balancer
       - monitoring_service
@@ -45,7 +45,8 @@ services:
       dockerfile: Dockerfile
     container_name: dlh-monitoring
     ports:
-      - "9000:9000"
+      - "9000:9000"  # XML-RPC metrics server
+      - "9005:9005"  # REST API server
     environment:
       - SERVICE_NAME=monitoring_service
     command: python -m services.monitoring_service
@@ -64,14 +65,19 @@ services:
       dockerfile: Dockerfile
     container_name: dlh-app1
     ports:
-      - "8001:8001"
-      - "9101:9001"  # RMI port
-      - "9102:9002"  # Heartbeat port
+      - "8001:8001"   # HTTP API
+      - "10001:9001"  # TCP Application Server
+      - "13001:13001" # RMI port
+      - "10011:9002"  # Heartbeat FT port
+      - "9100:9100"   # Bully Election port
+      - "9200:9200"   # Inter-Server Messaging port
     environment:
       - SERVER_ID=app1
       - PORT=8001
       - MONGO_URI=mongodb+srv://ganeshdandekar23_db_user:Uh4TirdCgXsqwPmL@dlh.nmdrhnl.mongodb.net/?appName=DLH
     command: python -m services.app_server
+    volumes:
+      - app1_logs:/logs
     networks:
       - dlnet
     restart: unless-stopped
@@ -83,14 +89,19 @@ services:
       dockerfile: Dockerfile
     container_name: dlh-app2
     ports:
-      - "8002:8002"
-      - "9201:9001"  # RMI port
-      - "9202:9002"  # Heartbeat port
+      - "8002:8002"   # HTTP API
+      - "10002:9001"  # TCP Application Server
+      - "13002:13001" # RMI port
+      - "10012:9002"  # Heartbeat FT port
+      - "9101:9100"   # Bully Election port
+      - "9201:9200"   # Inter-Server Messaging port
     environment:
       - SERVER_ID=app2
       - PORT=8002
       - MONGO_URI=mongodb+srv://ganeshdandekar23_db_user:Uh4TirdCgXsqwPmL@dlh.nmdrhnl.mongodb.net/?appName=DLH
     command: python -m services.app_server
+    volumes:
+      - app2_logs:/logs
     networks:
       - dlnet
     restart: unless-stopped
@@ -102,14 +113,19 @@ services:
       dockerfile: Dockerfile
     container_name: dlh-app3
     ports:
-      - "8003:8003"
-      - "9301:9001"  # RMI port
-      - "9302:9002"  # Heartbeat port
+      - "8003:8003"   # HTTP API
+      - "10003:9001"  # TCP Application Server
+      - "13003:13001" # RMI port
+      - "10013:9002"  # Heartbeat FT port
+      - "9102:9100"   # Bully Election port
+      - "9202:9200"   # Inter-Server Messaging port
     environment:
       - SERVER_ID=app3
       - PORT=8003
       - MONGO_URI=mongodb+srv://ganeshdandekar23_db_user:Uh4TirdCgXsqwPmL@dlh.nmdrhnl.mongodb.net/?appName=DLH
     command: python -m services.app_server
+    volumes:
+      - app3_logs:/logs
     networks:
       - dlnet
     restart: unless-stopped
@@ -124,7 +140,7 @@ services:
       - "8501:8501"
     environment:
       - SERVICE_NAME=analytics_dashboard
-      - MONITORING_URL=http://monitoring_service:9000
+      - MONITORING_URL=http://monitoring_service:9005
     command: streamlit run analytics/dashboard.py --server.port=8501 --server.address=0.0.0.0
     depends_on:
       - monitoring_service
@@ -138,5 +154,9 @@ networks:
     driver: bridge
 
 volumes:
+  app1_logs:
+  app2_logs:
+  app3_logs:
   dlh-data:
     driver: local
+

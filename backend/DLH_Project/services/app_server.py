@@ -1,7 +1,7 @@
 """
 Application Server
 Main backend server handling courses, users, and data with MongoDB.
-Integrates RMI, Lamport Clock, and Fault Tolerance protocols.
+Integrates RMI, Lamport Clock, Fault Tolerance, Bully Election, and Inter-Server Messaging.
 Enhanced with TCP socket server for handling direct connections.
 """
 
@@ -18,12 +18,16 @@ import socket
 import threading
 import json
 import select
+import xmlrpc.client
+import time
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from utils.lamport_clock import LamportClock
 from utils.custom_rmi import RMIDispatcher, CourseService
 from utils.ft_protocol import HeartbeatProtocol
+from utils.bully_election import BullyElection
+from utils.inter_server_messaging import InterServerMessaging
 
 app = Flask(__name__)
 CORS(app)
@@ -41,6 +45,8 @@ TCP_PORT = PORT  # Use same port for both HTTP and TCP
 lamport_clock = LamportClock()
 heartbeat_protocol = None
 rmi_dispatcher = None
+bully_election = None
+messaging_system = None
 
 # Connection tracking
 active_connections = 0
@@ -49,30 +55,89 @@ connection_lock = threading.Lock()
 
 class ApplicationServer:
     """
-    Enhanced Application Server with TCP socket support.
-    Handles client connections with Lamport clock synchronization and RMI support.
+    Enhanced Application Server with distributed computing features.
+    Integrates: TCP sockets, Lamport Clock, RMI, Fault Tolerance, Bully Election, and Inter-Server Messaging.
     """
     
     def __init__(self, server_id: str, port: int, lamport_clock: LamportClock, 
-                 heartbeat_protocol: HeartbeatProtocol = None):
+                 heartbeat_protocol: HeartbeatProtocol = None,
+                 bully_election: BullyElection = None,
+                 messaging_system: InterServerMessaging = None):
         """
-        Initialize Application Server.
+        Initialize Application Server with all distributed computing components.
         
         Args:
             server_id: Unique server identifier
             port: Port number to bind to
             lamport_clock: LamportClock instance for logical time
             heartbeat_protocol: HeartbeatProtocol instance for fault tolerance
+            bully_election: BullyElection instance for leader election
+            messaging_system: InterServerMessaging instance for communication
         """
         self.server_id = server_id
         self.port = port
         self.clock = lamport_clock
         self.heartbeat = heartbeat_protocol
+        self.election = bully_election
+        self.messaging = messaging_system
+        
+        # FT Role (managed by HeartbeatProtocol and Bully Election)
+        self.role = "BACKUP"  # Default to BACKUP, updated by election
+        
+        # Server state
         self.running = False
         self.tcp_socket = None
         self.active_connections_count = 0
         self.total_requests_handled = 0
         self.lock = threading.Lock()
+        
+        # XML-RPC client for monitoring
+        self.monitoring_client = None
+        self.monitoring_thread = None
+        
+        logger.info(f"ApplicationServer {server_id} initialized with all DC components")
+    
+    def start_monitoring_reports(self):
+        """Start background thread to report metrics to monitoring service via XML-RPC."""
+        self.monitoring_thread = threading.Thread(target=self._report_metrics_loop, daemon=True)
+        self.monitoring_thread.start()
+        logger.info(f"{self.server_id} started monitoring reports thread")
+    
+    def _report_metrics_loop(self):
+        """Report metrics to monitoring service every 5 seconds."""
+        # Initialize XML-RPC client
+        try:
+            self.monitoring_client = xmlrpc.client.ServerProxy('http://monitoring:9000', allow_none=True)
+            logger.info(f"{self.server_id} connected to monitoring service XML-RPC")
+        except Exception as e:
+            logger.error(f"Failed to connect to monitoring XML-RPC: {e}")
+            return
+        
+        while self.running:
+            try:
+                # Report Lamport clock
+                lamport_time = self.clock.get_time()
+                self.monitoring_client.report_clock(self.server_id, lamport_time)
+                
+                # Report election and FT status
+                leader_id = self.election.get_leader() if self.election else 'unknown'
+                ft_role = self.heartbeat.role if self.heartbeat else 'UNKNOWN'
+                self.monitoring_client.report_status(self.server_id, leader_id, ft_role)
+                
+                # Report load
+                with self.lock:
+                    active_conns = self.active_connections_count
+                self.monitoring_client.report_load(self.server_id, active_conns)
+                
+                # Report consistency status (placeholder for now)
+                self.monitoring_client.report_consistency(self.server_id, 'EVENTUAL')
+                
+                logger.debug(f"{self.server_id} reported metrics via XML-RPC")
+                
+            except Exception as e:
+                logger.error(f"Failed to report metrics via XML-RPC: {e}")
+            
+            time.sleep(5)  # Report every 5 seconds
         
     def start_server(self):
         """
@@ -380,6 +445,111 @@ def server_stats():
     }), 200
 
 
+# Bully Election endpoints
+@app.route('/election/status', methods=['GET'])
+def get_election_status():
+    """Get current election status."""
+    if bully_election:
+        return jsonify(bully_election.get_election_status()), 200
+    return jsonify({'error': 'Election not initialized'}), 503
+
+
+@app.route('/election/history', methods=['GET'])
+def get_election_history():
+    """Get election history."""
+    if bully_election:
+        return jsonify({
+            'server_id': SERVER_ID,
+            'history': bully_election.get_election_history()
+        }), 200
+    return jsonify({'error': 'Election not initialized'}), 503
+
+
+@app.route('/election/initiate', methods=['POST'])
+def initiate_election():
+    """Manually trigger an election."""
+    if bully_election:
+        threading.Thread(target=bully_election.initiate_election, daemon=True).start()
+        return jsonify({
+            'message': 'Election initiated',
+            'server_id': SERVER_ID
+        }), 200
+    return jsonify({'error': 'Election not initialized'}), 503
+
+
+# Inter-Server Messaging endpoints
+@app.route('/messages/send', methods=['POST'])
+def send_message():
+    """Send a discussion message to another server."""
+    if not messaging_system:
+        return jsonify({'error': 'Messaging not initialized'}), 503
+    
+    data = request.get_json()
+    target_server = data.get('target_server')
+    message = data.get('message')
+    message_type = data.get('message_type', 'discussion')
+    
+    if not target_server or not message:
+        return jsonify({'error': 'Missing target_server or message'}), 400
+    
+    success = messaging_system.send_discussion_message(message, target_server, message_type)
+    
+    return jsonify({
+        'success': success,
+        'sender': SERVER_ID,
+        'target': target_server,
+        'lamport_time': lamport_clock.get_time()
+    }), 200 if success else 500
+
+
+@app.route('/messages/broadcast', methods=['POST'])
+def broadcast_message():
+    """Broadcast a message to all servers."""
+    if not messaging_system:
+        return jsonify({'error': 'Messaging not initialized'}), 503
+    
+    data = request.get_json()
+    message = data.get('message')
+    message_type = data.get('message_type', 'broadcast')
+    
+    if not message:
+        return jsonify({'error': 'Missing message'}), 400
+    
+    results = messaging_system.broadcast_message(message, message_type)
+    
+    return jsonify({
+        'sender': SERVER_ID,
+        'results': results,
+        'lamport_time': lamport_clock.get_time()
+    }), 200
+
+
+@app.route('/messages/all', methods=['GET'])
+def get_all_messages():
+    """Get all messages (sent and received)."""
+    if not messaging_system:
+        return jsonify({'error': 'Messaging not initialized'}), 503
+    
+    limit = request.args.get('limit', 100, type=int)
+    messages = messaging_system.get_all_messages(limit)
+    
+    return jsonify({
+        'server_id': SERVER_ID,
+        'messages': messages,
+        'count': len(messages)
+    }), 200
+
+
+@app.route('/messages/stats', methods=['GET'])
+def get_message_stats():
+    """Get message statistics."""
+    if not messaging_system:
+        return jsonify({'error': 'Messaging not initialized'}), 503
+    
+    stats = messaging_system.get_message_stats()
+    return jsonify(stats), 200
+
+
 # Distributed Computing endpoints
 @app.route('/dc/lamport', methods=['GET'])
 def get_lamport_clock():
@@ -655,4 +825,98 @@ def get_stats():
 
 if __name__ == '__main__':
     logger.info(f"Starting {SERVER_ID} on port {PORT}")
+    logger.info("="*60)
+    logger.info("Initializing Distributed Computing Components")
+    logger.info("="*60)
+    
+    # Initialize Bully Election
+    def on_elected_leader():
+        """Callback when this server becomes leader."""
+        logger.info(f"🎖️  {SERVER_ID} ELECTED AS LEADER!")
+        # Update FT role to PRIMARY
+        if heartbeat_protocol:
+            heartbeat_protocol.promote_to_primary()
+    
+    bully_election = BullyElection(
+        server_id=SERVER_ID,
+        port=9100,
+        on_elected_leader=on_elected_leader
+    )
+    bully_election.start()
+    logger.info(f"✓ Bully Election initialized for {SERVER_ID}")
+    
+    # Initialize Inter-Server Messaging
+    def on_message_received(message_data):
+        """Callback when message is received."""
+        sender = message_data.get('sender')
+        content = message_data.get('content', '')[:50]
+        logger.info(f"📩 Message received from {sender}: {content}...")
+    
+    messaging_system = InterServerMessaging(
+        server_id=SERVER_ID,
+        lamport_clock=lamport_clock,
+        port=9200,
+        on_message_received=on_message_received
+    )
+    messaging_system.start()
+    logger.info(f"✓ Inter-Server Messaging initialized for {SERVER_ID}")
+    
+    # Initialize Heartbeat Protocol (Fault Tolerance)
+    primary_server = 'app1'  # app1 is initially PRIMARY
+    role = 'PRIMARY' if SERVER_ID == primary_server else 'BACKUP'
+    
+    def on_become_primary():
+        """Callback when promoted to PRIMARY due to failure."""
+        logger.info(f"⚡ {SERVER_ID} PROMOTED TO PRIMARY due to failure!")
+        # Initiate election to confirm leadership
+        if bully_election:
+            threading.Thread(target=bully_election.initiate_election, daemon=True).start()
+    
+    heartbeat_protocol = HeartbeatProtocol(
+        server_id=SERVER_ID,
+        role=role,
+        primary_host=primary_server if role == 'BACKUP' else None,
+        port=9002
+    )
+    heartbeat_protocol.on_promote_to_primary = on_become_primary
+    heartbeat_protocol.start()
+    logger.info(f"✓ Heartbeat Protocol started as {role}")
+    
+    # Initialize RMI Dispatcher
+    course_service = CourseService(courses_collection)
+    rmi_dispatcher = RMIDispatcher(SERVER_ID, PORT + 5000, course_service)  # RMI on port 13001, 13002, 13003
+    rmi_dispatcher.start()
+    logger.info(f"✓ RMI Dispatcher started on port {PORT + 5000}")
+    
+    # Initialize Application Server (TCP)
+    app_server = ApplicationServer(
+        server_id=SERVER_ID,
+        port=PORT,
+        lamport_clock=lamport_clock,
+        heartbeat_protocol=heartbeat_protocol,
+        bully_election=bully_election,
+        messaging_system=messaging_system
+    )
+    
+    # Start TCP server in background thread
+    tcp_thread = threading.Thread(target=app_server.start_server, daemon=True)
+    tcp_thread.start()
+    logger.info(f"✓ TCP Application Server started on port {PORT + 1000}")
+    
+    # Start XML-RPC monitoring reports
+    app_server.start_monitoring_reports()
+    logger.info(f"✓ XML-RPC monitoring reports started")
+    
+    # Initial election to determine leader
+    time.sleep(2)  # Wait for all servers to initialize
+    if SERVER_ID == 'app3':  # Highest ranked server initiates first election
+        logger.info(f"{SERVER_ID} initiating first election...")
+        threading.Thread(target=bully_election.initiate_election, daemon=True).start()
+    
+    logger.info("="*60)
+    logger.info(f"✅ {SERVER_ID} FULLY INITIALIZED - All DC components running")
+    logger.info("="*60)
+    
+    # Start Flask app
     app.run(host='0.0.0.0', port=PORT, debug=False)
+

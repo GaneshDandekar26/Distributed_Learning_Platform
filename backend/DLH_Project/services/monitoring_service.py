@@ -1,6 +1,7 @@
 """
 Monitoring Service
 Tracks health, metrics, and performance of all distributed services.
+Includes XML-RPC server for distributed metrics reporting.
 """
 
 from flask import Flask, jsonify, request
@@ -11,12 +12,117 @@ import time
 from datetime import datetime
 from typing import Dict, List
 import logging
+from xmlrpc.server import SimpleXMLRPCServer
+from xmlrpc.server import SimpleXMLRPCRequestHandler
 
 app = Flask(__name__)
 CORS(app)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+
+class XMLRPCMetricsServer:
+    """
+    XML-RPC Server for distributed metrics reporting.
+    Application servers call these methods to report their metrics.
+    """
+    
+    def __init__(self):
+        self.server_metrics = {}
+        self.lock = threading.Lock()
+        logger.info("XML-RPC Metrics Server initialized")
+    
+    def report_clock(self, server_id: str, lamport_time: int) -> str:
+        """
+        Report Lamport clock value from a server.
+        
+        Args:
+            server_id: Server identifier (e.g., 'app1')
+            lamport_time: Current Lamport clock value
+            
+        Returns:
+            Acknowledgment message
+        """
+        with self.lock:
+            if server_id not in self.server_metrics:
+                self.server_metrics[server_id] = {}
+            
+            self.server_metrics[server_id]['lamport_time'] = lamport_time
+            self.server_metrics[server_id]['last_clock_update'] = time.time()
+        
+        logger.debug(f"Received clock report from {server_id}: {lamport_time}")
+        return f"Clock report received from {server_id}"
+    
+    def report_status(self, server_id: str, leader_id: str, ft_role: str) -> str:
+        """
+        Report election and FT status from a server.
+        
+        Args:
+            server_id: Server identifier
+            leader_id: Current leader ID (from Bully election)
+            ft_role: Fault tolerance role ('PRIMARY' or 'BACKUP')
+            
+        Returns:
+            Acknowledgment message
+        """
+        with self.lock:
+            if server_id not in self.server_metrics:
+                self.server_metrics[server_id] = {}
+            
+            self.server_metrics[server_id]['leader_id'] = leader_id
+            self.server_metrics[server_id]['ft_role'] = ft_role
+            self.server_metrics[server_id]['last_status_update'] = time.time()
+        
+        logger.debug(f"Received status report from {server_id}: leader={leader_id}, role={ft_role}")
+        return f"Status report received from {server_id}"
+    
+    def report_load(self, server_id: str, active_connections: int) -> str:
+        """
+        Report load metrics from a server.
+        
+        Args:
+            server_id: Server identifier
+            active_connections: Number of active connections
+            
+        Returns:
+            Acknowledgment message
+        """
+        with self.lock:
+            if server_id not in self.server_metrics:
+                self.server_metrics[server_id] = {}
+            
+            self.server_metrics[server_id]['active_connections'] = active_connections
+            self.server_metrics[server_id]['last_load_update'] = time.time()
+        
+        logger.debug(f"Received load report from {server_id}: {active_connections} connections")
+        return f"Load report received from {server_id}"
+    
+    def report_consistency(self, server_id: str, status: str) -> str:
+        """
+        Report consistency status from a server.
+        
+        Args:
+            server_id: Server identifier
+            status: Consistency status (e.g., 'EVENTUAL', 'CAUSAL', 'STRONG')
+            
+        Returns:
+            Acknowledgment message
+        """
+        with self.lock:
+            if server_id not in self.server_metrics:
+                self.server_metrics[server_id] = {}
+            
+            self.server_metrics[server_id]['consistency_status'] = status
+            self.server_metrics[server_id]['last_consistency_update'] = time.time()
+        
+        logger.debug(f"Received consistency report from {server_id}: {status}")
+        return f"Consistency report received from {server_id}"
+    
+    def get_all_metrics(self) -> dict:
+        """Get all reported metrics."""
+        with self.lock:
+            return self.server_metrics.copy()
 
 
 class MonitoringService:
@@ -41,16 +147,48 @@ class MonitoringService:
                 'start_time': datetime.now().isoformat(),
                 'lamport_time': 0,
                 'role': 'UNKNOWN',
-                'is_primary': False
+                'is_primary': False,
+                'election_leader': None,
+                'message_count': 0
             }
             for service in self.services
         }
         
         self.history = {service: [] for service in self.services}
         
+        # XML-RPC metrics storage
+        self.xmlrpc_server = XMLRPCMetricsServer()
+        
         # Start monitoring thread
         self.monitoring_thread = threading.Thread(target=self._monitor_loop, daemon=True)
         self.monitoring_thread.start()
+        
+        # Start XML-RPC server thread
+        self.xmlrpc_thread = threading.Thread(target=self._start_xmlrpc_server, daemon=True)
+        self.xmlrpc_thread.start()
+    
+    def _start_xmlrpc_server(self):
+        """Start XML-RPC server on port 9000 for metrics reporting."""
+        try:
+            # Create XML-RPC server
+            server = SimpleXMLRPCServer(
+                ('0.0.0.0', 9000),
+                requestHandler=SimpleXMLRPCRequestHandler,
+                allow_none=True,
+                logRequests=False
+            )
+            
+            # Register methods
+            server.register_function(self.xmlrpc_server.report_clock, 'report_clock')
+            server.register_function(self.xmlrpc_server.report_status, 'report_status')
+            server.register_function(self.xmlrpc_server.report_load, 'report_load')
+            server.register_function(self.xmlrpc_server.report_consistency, 'report_consistency')
+            
+            logger.info("XML-RPC Metrics Server started on port 9000")
+            server.serve_forever()
+            
+        except Exception as e:
+            logger.error(f"Failed to start XML-RPC server: {e}")
         
     def _monitor_loop(self):
         """Continuously monitor all services."""
@@ -233,6 +371,108 @@ def get_lb_connections():
     return jsonify({'error': 'Unable to fetch load balancer connections'}), 500
 
 
+@app.route('/election/status', methods=['GET'])
+def get_election_status():
+    """Get Bully election status from all servers."""
+    election_data = {}
+    
+    for service_name in ['app1', 'app2', 'app3']:
+        try:
+            url = monitor.services[service_name]['url']
+            response = requests.get(f"{url}/election/status", timeout=2)
+            if response.status_code == 200:
+                election_data[service_name] = response.json()
+        except Exception as e:
+            logger.error(f"Failed to get election status from {service_name}: {e}")
+            election_data[service_name] = {'error': str(e)}
+    
+    return jsonify(election_data), 200
+
+
+@app.route('/election/history', methods=['GET'])
+def get_election_history():
+    """Get election history from all servers."""
+    history_data = {}
+    
+    for service_name in ['app1', 'app2', 'app3']:
+        try:
+            url = monitor.services[service_name]['url']
+            response = requests.get(f"{url}/election/history", timeout=2)
+            if response.status_code == 200:
+                history_data[service_name] = response.json()
+        except Exception as e:
+            logger.error(f"Failed to get election history from {service_name}: {e}")
+            history_data[service_name] = {'error': str(e)}
+    
+    return jsonify(history_data), 200
+
+
+@app.route('/messages/all', methods=['GET'])
+def get_all_messages():
+    """Get all inter-server messages from all servers."""
+    messages_data = {}
+    
+    for service_name in ['app1', 'app2', 'app3']:
+        try:
+            url = monitor.services[service_name]['url']
+            response = requests.get(f"{url}/messages/all", timeout=2)
+            if response.status_code == 200:
+                messages_data[service_name] = response.json()
+        except Exception as e:
+            logger.error(f"Failed to get messages from {service_name}: {e}")
+            messages_data[service_name] = {'error': str(e)}
+    
+    return jsonify(messages_data), 200
+
+
+@app.route('/messages/stats', methods=['GET'])
+def get_message_stats():
+    """Get message statistics from all servers."""
+    stats_data = {}
+    
+    for service_name in ['app1', 'app2', 'app3']:
+        try:
+            url = monitor.services[service_name]['url']
+            response = requests.get(f"{url}/messages/stats", timeout=2)
+            if response.status_code == 200:
+                stats_data[service_name] = response.json()
+        except Exception as e:
+            logger.error(f"Failed to get message stats from {service_name}: {e}")
+            stats_data[service_name] = {'error': str(e)}
+    
+    return jsonify(stats_data), 200
+
+
+@app.route('/ft/roles', methods=['GET'])
+def get_ft_roles():
+    """Get fault tolerance roles from all servers."""
+    roles_data = {}
+    
+    for service_name in ['app1', 'app2', 'app3']:
+        try:
+            url = monitor.services[service_name]['url']
+            response = requests.get(f"{url}/health", timeout=2)
+            if response.status_code == 200:
+                health_data = response.json()
+                roles_data[service_name] = {
+                    'role': health_data.get('fault_tolerance', {}).get('role', 'UNKNOWN'),
+                    'is_primary': health_data.get('fault_tolerance', {}).get('is_primary', False),
+                    'status': health_data.get('fault_tolerance', {}).get('status', 'unknown')
+                }
+        except Exception as e:
+            logger.error(f"Failed to get FT role from {service_name}: {e}")
+            roles_data[service_name] = {'error': str(e)}
+    
+    return jsonify(roles_data), 200
+
+
+@app.route('/xmlrpc/metrics', methods=['GET'])
+def get_xmlrpc_metrics():
+    """Get metrics reported via XML-RPC."""
+    return jsonify(monitor.xmlrpc_server.get_all_metrics()), 200
+
+
 if __name__ == '__main__':
-    logger.info("Starting Monitoring Service on port 9000")
-    app.run(host='0.0.0.0', port=9000, debug=False)
+    logger.info("Starting Monitoring Service REST API on port 9005")
+    logger.info("XML-RPC Metrics Server running on port 9000")
+    app.run(host='0.0.0.0', port=9005, debug=False)
