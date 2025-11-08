@@ -8,6 +8,8 @@ import { ServerStateTable } from "@/components/ServerStateTable";
 import { ConsistencyPanel } from "@/components/ConsistencyPanel";
 import { DCActivityLog } from "@/components/DCActivityLog";
 import { StatusIndicator } from "@/components/StatusIndicator";
+import { LoadBalancerChart } from "@/components/LoadBalancerChart";
+import { AppServerStats } from "@/components/AppServerStats";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { LogOut, Activity, Server, AlertCircle } from "lucide-react";
@@ -222,6 +224,12 @@ const AdminDashboard = () => {
               </div>
             </CardContent>
           </Card>
+
+          {/* Load Balancer Connection Distribution */}
+          <LoadBalancerChart />
+
+          {/* Application Server Statistics */}
+          <AppServerStats servers={metrics.servers} />
 
           {/* Load Balancing Chart */}
           <MetricsChart servers={metrics.servers} />

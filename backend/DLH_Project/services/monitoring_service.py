@@ -72,6 +72,8 @@ class MonitoringService:
             health_data = response.json() if is_healthy else {}
             lamport_time = health_data.get('lamport_time', 0)
             ft_status = health_data.get('fault_tolerance', {})
+            active_connections = health_data.get('active_connections', 0)
+            total_requests = health_data.get('total_requests', 0)
             
             self.metrics[service_name].update({
                 'status': 'healthy' if is_healthy else 'unhealthy',
@@ -80,7 +82,9 @@ class MonitoringService:
                 'requests_count': self.metrics[service_name]['requests_count'] + 1,
                 'lamport_time': lamport_time,
                 'role': ft_status.get('role', 'UNKNOWN') if ft_status else 'UNKNOWN',
-                'is_primary': ft_status.get('role') == 'PRIMARY' if ft_status else False
+                'is_primary': ft_status.get('role') == 'PRIMARY' if ft_status else False,
+                'active_connections': active_connections,
+                'total_requests': total_requests
             })
             
             if is_healthy:
@@ -92,13 +96,14 @@ class MonitoringService:
                 'status': 'healthy' if is_healthy else 'unhealthy',
                 'response_time': round(response_time, 2),
                 'lamport_time': lamport_time,
-                'role': ft_status.get('role', 'UNKNOWN') if ft_status else 'UNKNOWN'
+                'role': ft_status.get('role', 'UNKNOWN') if ft_status else 'UNKNOWN',
+                'active_connections': active_connections
             })
             
             if len(self.history[service_name]) > 100:
                 self.history[service_name].pop(0)
                 
-            logger.info(f"{service_name}: {self.metrics[service_name]['status']} ({response_time:.2f}ms) Lamport:{lamport_time} Role:{self.metrics[service_name]['role']}")
+            logger.info(f"{service_name}: {self.metrics[service_name]['status']} ({response_time:.2f}ms) Lamport:{lamport_time} Role:{self.metrics[service_name]['role']} Conns:{active_connections}")
             
         except Exception as e:
             self.metrics[service_name].update({
@@ -117,6 +122,26 @@ class MonitoringService:
                 self.history[service_name].pop(0)
                 
             logger.warning(f"{service_name} is down: {e}")
+    
+    def get_load_balancer_metrics(self):
+        """Get detailed load balancer metrics."""
+        try:
+            lb_url = self.services['load_balancer']['url']
+            
+            # Get connection distribution
+            conn_response = requests.get(f"{lb_url}/lb/connections", timeout=2)
+            lb_metrics_response = requests.get(f"{lb_url}/lb/metrics", timeout=2)
+            
+            if conn_response.status_code == 200 and lb_metrics_response.status_code == 200:
+                return {
+                    'connections': conn_response.json(),
+                    'detailed_metrics': lb_metrics_response.json()
+                }
+        except Exception as e:
+            logger.error(f"Failed to get load balancer metrics: {e}")
+        
+        return None
+
             
     def get_metrics(self):
         """Get all service metrics."""
@@ -188,6 +213,24 @@ def get_services():
         'services': list(monitor.services.keys()),
         'count': len(monitor.services)
     }), 200
+
+
+@app.route('/lb/metrics', methods=['GET'])
+def get_lb_metrics():
+    """Get detailed load balancer metrics."""
+    lb_metrics = monitor.get_load_balancer_metrics()
+    if lb_metrics:
+        return jsonify(lb_metrics), 200
+    return jsonify({'error': 'Unable to fetch load balancer metrics'}), 500
+
+
+@app.route('/lb/connections', methods=['GET'])
+def get_lb_connections():
+    """Get load balancer connection distribution."""
+    lb_metrics = monitor.get_load_balancer_metrics()
+    if lb_metrics:
+        return jsonify(lb_metrics.get('connections', {})), 200
+    return jsonify({'error': 'Unable to fetch load balancer connections'}), 500
 
 
 if __name__ == '__main__':

@@ -2,6 +2,7 @@
 Application Server
 Main backend server handling courses, users, and data with MongoDB.
 Integrates RMI, Lamport Clock, and Fault Tolerance protocols.
+Enhanced with TCP socket server for handling direct connections.
 """
 
 from flask import Flask, jsonify, request
@@ -13,6 +14,11 @@ import logging
 from datetime import datetime
 import hashlib
 import sys
+import socket
+import threading
+import json
+import select
+
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from utils.lamport_clock import LamportClock
@@ -29,11 +35,217 @@ logger = logging.getLogger(__name__)
 MONGO_URI = os.getenv('MONGO_URI', 'mongodb+srv://ganeshdandekar23_db_user:Uh4TirdCgXsqwPmL@dlh.nmdrhnl.mongodb.net/?appName=DLH')
 SERVER_ID = os.getenv('SERVER_ID', 'app1')
 PORT = int(os.getenv('PORT', '8001'))
+TCP_PORT = PORT  # Use same port for both HTTP and TCP
 
 # Initialize Distributed Computing components
 lamport_clock = LamportClock()
 heartbeat_protocol = None
 rmi_dispatcher = None
+
+# Connection tracking
+active_connections = 0
+connection_lock = threading.Lock()
+
+
+class ApplicationServer:
+    """
+    Enhanced Application Server with TCP socket support.
+    Handles client connections with Lamport clock synchronization and RMI support.
+    """
+    
+    def __init__(self, server_id: str, port: int, lamport_clock: LamportClock, 
+                 heartbeat_protocol: HeartbeatProtocol = None):
+        """
+        Initialize Application Server.
+        
+        Args:
+            server_id: Unique server identifier
+            port: Port number to bind to
+            lamport_clock: LamportClock instance for logical time
+            heartbeat_protocol: HeartbeatProtocol instance for fault tolerance
+        """
+        self.server_id = server_id
+        self.port = port
+        self.clock = lamport_clock
+        self.heartbeat = heartbeat_protocol
+        self.running = False
+        self.tcp_socket = None
+        self.active_connections_count = 0
+        self.total_requests_handled = 0
+        self.lock = threading.Lock()
+        
+    def start_server(self):
+        """
+        Start TCP socket server.
+        Binds to 0.0.0.0 for Docker compatibility.
+        """
+        self.running = True
+        self.tcp_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.tcp_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        
+        try:
+            # Note: We're starting TCP server on a different port to avoid conflict with Flask
+            tcp_port = self.port + 1000  # e.g., 9001 for app1, 9002 for app2
+            self.tcp_socket.bind(('0.0.0.0', tcp_port))
+            self.tcp_socket.listen(50)
+            logger.info(f"TCP Application Server {self.server_id} listening on 0.0.0.0:{tcp_port}")
+            
+            while self.running:
+                try:
+                    client_socket, client_address = self.tcp_socket.accept()
+                    logger.info(f"Accepted TCP connection from {client_address}")
+                    
+                    # Spawn thread to handle client
+                    client_thread = threading.Thread(
+                        target=self.handle_client,
+                        args=(client_socket, client_address),
+                        daemon=True
+                    )
+                    client_thread.start()
+                    
+                except Exception as e:
+                    if self.running:
+                        logger.error(f"Error accepting TCP connection: {e}")
+                        
+        except Exception as e:
+            logger.error(f"Failed to start TCP server: {e}")
+        finally:
+            if self.tcp_socket:
+                self.tcp_socket.close()
+                
+    def handle_client(self, client_socket: socket.socket, client_address: tuple):
+        """
+        Handle individual client connection.
+        Increments Lamport clock on state-modifying requests.
+        
+        Args:
+            client_socket: Client socket connection
+            client_address: Client address tuple (ip, port)
+        """
+        with self.lock:
+            self.active_connections_count += 1
+            
+        try:
+            # Set socket timeout
+            client_socket.settimeout(30)
+            
+            # Receive request data
+            data = b''
+            while True:
+                chunk = client_socket.recv(4096)
+                if not chunk:
+                    break
+                data += chunk
+                if len(chunk) < 4096:
+                    break
+                    
+            if not data:
+                return
+                
+            # Parse request
+            try:
+                request_data = json.loads(data.decode('utf-8'))
+                logger.info(f"TCP Request from {client_address}: {request_data.get('action', 'unknown')}")
+                
+                # Handle request and get response
+                response = self.process_request(request_data)
+                
+                # Send response
+                response_json = json.dumps(response).encode('utf-8')
+                client_socket.sendall(response_json)
+                
+                with self.lock:
+                    self.total_requests_handled += 1
+                    
+            except json.JSONDecodeError as e:
+                logger.error(f"Invalid JSON from {client_address}: {e}")
+                error_response = json.dumps({'error': 'Invalid JSON'}).encode('utf-8')
+                client_socket.sendall(error_response)
+                
+        except socket.timeout:
+            logger.warning(f"Socket timeout for {client_address}")
+        except Exception as e:
+            logger.error(f"Error handling client {client_address}: {e}")
+        finally:
+            with self.lock:
+                self.active_connections_count -= 1
+            try:
+                client_socket.close()
+            except:
+                pass
+                
+    def process_request(self, request_data: dict) -> dict:
+        """
+        Process client request with Lamport clock synchronization.
+        
+        Args:
+            request_data: Request dictionary with 'action' and other parameters
+            
+        Returns:
+            Response dictionary with result and timestamp
+        """
+        action = request_data.get('action')
+        external_ts = request_data.get('lamport_time', 0)
+        
+        # Update Lamport clock on receive
+        if external_ts > 0:
+            self.clock.update_on_receive(external_ts)
+        
+        # Increment clock for local event (state-modifying request)
+        if action in ['create', 'update', 'delete', 'write', 'modify']:
+            current_time = self.clock.increment_local()
+            logger.info(f"State-modifying request '{action}' - Lamport time: {current_time}")
+        else:
+            current_time = self.clock.get_time()
+            
+        # Process based on action
+        response = {
+            'server_id': self.server_id,
+            'lamport_time': current_time,
+            'timestamp': datetime.now().isoformat(),
+            'action': action
+        }
+        
+        # Handle different actions
+        if action == 'get_status':
+            response['result'] = {
+                'active_connections': self.active_connections_count,
+                'total_requests': self.total_requests_handled,
+                'is_primary': self.heartbeat.is_primary() if self.heartbeat else False
+            }
+        elif action == 'health_check':
+            response['result'] = {'status': 'healthy'}
+        else:
+            # Handle RMI or custom requests
+            response['result'] = {'message': f'Action {action} processed'}
+            
+        # Return acknowledgment with timestamp
+        response['acknowledgment'] = 'success'
+        return response
+        
+    def get_stats(self) -> dict:
+        """Get server statistics."""
+        with self.lock:
+            return {
+                'server_id': self.server_id,
+                'active_connections': self.active_connections_count,
+                'total_requests': self.total_requests_handled,
+                'lamport_time': self.clock.get_time()
+            }
+            
+    def stop_server(self):
+        """Stop the TCP server."""
+        self.running = False
+        if self.tcp_socket:
+            try:
+                self.tcp_socket.close()
+            except:
+                pass
+        logger.info(f"TCP Application Server {self.server_id} stopped")
+
+
+# Initialize Application Server instance
+app_server = None
 
 try:
     client = MongoClient(MONGO_URI)
@@ -69,8 +281,21 @@ try:
     heartbeat_protocol.start()
     logger.info(f"Heartbeat protocol started as {role}")
     
+    # Initialize Enhanced Application Server
+    app_server = ApplicationServer(
+        server_id=SERVER_ID,
+        port=PORT,
+        lamport_clock=lamport_clock,
+        heartbeat_protocol=heartbeat_protocol
+    )
+    
+    # Start TCP server in background thread
+    tcp_server_thread = threading.Thread(target=app_server.start_server, daemon=True)
+    tcp_server_thread.start()
+    logger.info(f"TCP Application Server thread started")
+    
 except Exception as e:
-    logger.error(f"Failed to connect to MongoDB: {e}")
+    logger.error(f"Failed to initialize services: {e}")
     db = None
 
 
@@ -102,6 +327,9 @@ def health():
     db_status = 'connected' if db is not None else 'disconnected'
     ft_status = heartbeat_protocol.get_status() if heartbeat_protocol else None
     
+    # Get app server stats if available
+    app_server_stats = app_server.get_stats() if app_server else {}
+    
     return jsonify({
         'status': 'healthy',
         'server_id': SERVER_ID,
@@ -109,7 +337,9 @@ def health():
         'database': db_status,
         'timestamp': datetime.now().isoformat(),
         'lamport_time': lamport_time,
-        'fault_tolerance': ft_status
+        'fault_tolerance': ft_status,
+        'active_connections': app_server_stats.get('active_connections', 0),
+        'total_requests': app_server_stats.get('total_requests', 0)
     }), 200
 
 
@@ -118,6 +348,7 @@ def info():
     """Server information with DC status."""
     lamport_time = lamport_clock.get_time()
     ft_status = heartbeat_protocol.get_status() if heartbeat_protocol else None
+    app_server_stats = app_server.get_stats() if app_server else {}
     
     return jsonify({
         'server_id': SERVER_ID,
@@ -126,7 +357,26 @@ def info():
         'timestamp': datetime.now().isoformat(),
         'lamport_clock': lamport_time,
         'role': ft_status.get('role') if ft_status else 'UNKNOWN',
-        'is_primary': heartbeat_protocol.is_primary() if heartbeat_protocol else False
+        'is_primary': heartbeat_protocol.is_primary() if heartbeat_protocol else False,
+        'tcp_stats': app_server_stats
+    }), 200
+
+
+@app.route('/server/stats', methods=['GET'])
+def server_stats():
+    """Get detailed server statistics including TCP connections."""
+    app_server_stats = app_server.get_stats() if app_server else {}
+    
+    return jsonify({
+        'server_id': SERVER_ID,
+        'port': PORT,
+        'tcp_port': PORT + 1000,
+        'lamport_time': lamport_clock.get_time(),
+        'active_connections': app_server_stats.get('active_connections', 0),
+        'total_requests_handled': app_server_stats.get('total_requests', 0),
+        'is_primary': heartbeat_protocol.is_primary() if heartbeat_protocol else False,
+        'role': heartbeat_protocol.get_status().get('role') if heartbeat_protocol else 'UNKNOWN',
+        'timestamp': datetime.now().isoformat()
     }), 200
 
 
